@@ -25,3 +25,5 @@ collision-safe file creation at acceptance, actual saved path metadata, portable
 seek/write and file-length APIs, and hostname lookup without sys_metrics.
 
 - Implement outbound Quick Share plain-text/URL metadata and encrypted BYTE payloads for clipboard sharing. Preserve UTF-8 text (including control byte 0x10), require consent before completing inbound text, and validate received payload length.
+
+- Keep outbound transfers connected until receiver completion/acknowledgement, handle Android ACK/CONTROL packets without assuming they contain data chunks, and use 64 KiB file chunks. Do not report successful transfer merely because socket writes completed.

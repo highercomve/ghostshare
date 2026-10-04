@@ -342,17 +342,36 @@ fn guarded(f: impl FnOnce() -> Result<Value, String>) -> *mut c_char {
             .unwrap_or_else(|_| Err("Quick Share engine panicked".into())),
     )
 }
+fn setup_logging() {
+    let writer: Box<dyn std::io::Write + Send> = (|| -> std::io::Result<_> {
+        let dirs = directories::ProjectDirs::from("dev", "ghostshare", "GhostShare")
+            .ok_or_else(|| std::io::Error::other("No application state directory"))?;
+        let folder = dirs.state_dir().unwrap_or(dirs.data_local_dir());
+        std::fs::create_dir_all(folder)?;
+        let path = folder.join("quickshare.log");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1024 * 1024) {
+            let _ = std::fs::rename(&path, folder.join("quickshare.previous.log"));
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path)
+    })().map(|file| Box::new(file) as Box<dyn std::io::Write + Send>)
+        .unwrap_or_else(|_| Box::new(std::io::stderr()));
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()))
+        .with_writer(Mutex::new(writer))
+        .try_init();
+}
 /// Input must be a valid NUL-terminated UTF-8 string owned by the caller.
 #[no_mangle]
 pub unsafe extern "C" fn ghostshare_start(directory: *const c_char) -> *mut c_char {
     guarded(|| {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "warn".into()),
-            )
-            .with_writer(std::io::stderr)
-            .try_init();
+        setup_logging();
         if directory.is_null() {
             return Err("Missing downloads directory".into());
         }

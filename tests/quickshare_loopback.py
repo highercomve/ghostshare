@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import tempfile
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ def port():
 
 def worker(connection, directory, bind_port):
     os.environ["GHOSTFILE_PORT"] = str(bind_port)
+    os.environ["XDG_STATE_HOME"] = str(directory.parent / "state")
     library = ctypes.CDLL(str(ROOT / "target/release/libghostshare_quickshare.so"))
     for name in ("ghostshare_start", "ghostshare_request"):
         fn = getattr(library, name)
@@ -60,6 +62,52 @@ def wait(connection, predicate):
             return match
         time.sleep(0.1)
     raise AssertionError(last)
+
+def delayed_completion_proxy(receiver_port):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0)); listener.listen(1)
+    proxy_port = listener.getsockname()[1]
+    paused, release = threading.Event(), threading.Event()
+    def read_exact(source, length):
+        value = bytearray()
+        while len(value) < length:
+            part = source.recv(length - len(value))
+            if not part: return None
+            value.extend(part)
+        return bytes(value)
+    def relay(source, destination, delay):
+        consent_frames = 2
+        try:
+            while True:
+                if delay:
+                    header = read_exact(source, 4)
+                    if header is None: break
+                    body = read_exact(source, int.from_bytes(header, "big"))
+                    if body is None: break
+                    data = header + body
+                    if paused.is_set():
+                        if consent_frames: consent_frames -= 1
+                        else: assert release.wait(10), "completion gate timed out"
+                else:
+                    data = source.recv(65536)
+                    if not data: break
+                destination.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try: destination.shutdown(socket.SHUT_WR)
+            except OSError: pass
+    def run():
+        client, _ = listener.accept()
+        with client, socket.create_connection(("127.0.0.1", receiver_port)) as receiver:
+            forward = threading.Thread(target=relay, args=(client, receiver, False), daemon=True)
+            forward.start()
+            relay(receiver, client, True)
+            forward.join(10)
+        listener.close()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return proxy_port, paused, release, thread
 
 def main():
     mp.set_start_method("spawn")
@@ -135,6 +183,25 @@ def main():
             known_ids = {t["id"] for t in request(sender, "snapshot")["transfers"]}
             request(sender, "send", address=f"127.0.0.1:{port()}", name="Offline", paths=[files[0]])
             wait(sender, lambda t: t["id"] not in known_ids and t["state"] == "Disconnected" and t["rtype"] == "Outbound")
+            # Android-like delayed receiver completion: writing all bytes is not success.
+            image = directory / "large-image.png"
+            image.write_bytes(os.urandom(14 * 1024 * 1024))
+            proxy_port, paused, release, proxy = delayed_completion_proxy(receiver_port)
+            request(sender, "send", address=f"127.0.0.1:{proxy_port}", name="Receiver", paths=[str(image)])
+            delayed_incoming = wait(receiver, lambda t: t["state"] == "WaitingForUserConsent")
+            delayed_outgoing = wait(sender, lambda t: (t.get("meta") or {}).get("files") == [str(image)])
+            paused.set()
+            request(receiver, "decide", id=delayed_incoming["id"], accept=True)
+            try:
+                wait(receiver, lambda t: t["id"] == delayed_incoming["id"] and t["state"] == "Finished")
+                sent = wait(sender, lambda t: t["id"] == delayed_outgoing["id"] and t["meta"]["ack_bytes"] == image.stat().st_size)
+                assert sent["state"] == "SendingFiles", "sender closed before receiver confirmation"
+                assert (destination / image.name).read_bytes() == image.read_bytes()
+            finally:
+                release.set()
+            wait(sender, lambda t: t["id"] == delayed_outgoing["id"] and t["state"] == "Finished")
+            proxy.join(10)
+            assert not proxy.is_alive()
             # Real BYTE payloads for clipboard text and URLs, never temporary text files.
             for text in ("Hello 👻\nClipboard\x10 stays intact", "https://example.com/share?q=ghost", "é" * 300000):
                 request(sender, "send_text", address=f"127.0.0.1:{receiver_port}", name="Receiver", text=text)
@@ -156,7 +223,7 @@ def main():
             for invalid in ("", "x" * (1024 * 1024 + 1), "bad\0text"):
                 sender.send(dict(command="send_text", address=f"127.0.0.1:{receiver_port}", name="Receiver", text=invalid))
                 assert sender.poll(12) and not sender.recv()["ok"]
-            print("PASS: encrypted batches, empty files, matching PINs, consent, decline, cancellation, visibility, duplicate preservation, connection failures, clipboard text/URLs, Unicode, text consent and limits")
+            print("PASS: encrypted batches, empty files, matching PINs, consent, decline, cancellation, visibility, duplicate preservation, connection failures, clipboard text/URLs, Unicode, text consent and limits, 14 MB file with delayed receiver completion")
         finally:
             for connection in connections:
                 connection.send(None)

@@ -117,3 +117,5 @@ GPL-3.0-only, consistent with the integrated RQuickShare dependency. Oriel is MI
 Choose **Clipboard text**, then **Paste clipboard** (or type text), review it, and select a nearby device. The tray also has **Send clipboard…**. Text and links use Quick Share text/BYTE payloads, with the same confirmation code and receiver approval as files. Text is limited to 1 MB. Clipboard images and automatic clipboard synchronization are not implemented.
 
 Received text appears in Activity with **Copy text**, also available on its completion notification. Accepting text keeps it in the current session; it does not overwrite your clipboard or create a downloaded file. Copy is an explicit action.
+
+Quick Share errors are saved in the application state directory (`~/.local/state/ghostshare/quickshare.log` on Linux). The previous log is retained when a log larger than 1 MB is rotated at startup. Outbound transfers remain active until the receiver confirms completion; a receiver that never confirms times out after 30 seconds.

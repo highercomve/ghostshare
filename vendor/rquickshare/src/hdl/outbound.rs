@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 
@@ -71,6 +71,8 @@ pub struct OutboundRequest {
     sender: Sender<ChannelMessage>,
     receiver: Receiver<ChannelMessage>,
     payload: OutboundPayload,
+    pending_payloads: HashSet<i64>,
+    completion_deadline: Option<tokio::time::Instant>,
 }
 
 impl OutboundRequest {
@@ -114,6 +116,8 @@ impl OutboundRequest {
             sender,
             receiver,
             payload,
+            pending_payloads: HashSet::new(),
+            completion_deadline: None,
         }
     }
 
@@ -122,6 +126,9 @@ impl OutboundRequest {
         let mut length_buf = [0u8; 4];
 
         tokio::select! {
+            _ = tokio::time::sleep_until(self.completion_deadline.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(3600))), if self.completion_deadline.is_some() => {
+                return Err(anyhow!("Receiver did not confirm transfer completion within 30 seconds"));
+            }
             i = self.receiver.recv() => {
                 match i {
                     Ok(channel_msg) => {
@@ -478,6 +485,17 @@ impl OutboundRequest {
                     .payload_header
                     .as_ref()
                     .ok_or_else(|| anyhow!("Missing required fields"))?;
+                // Android can send CONTROL/ACK packets without a payload chunk.
+                if payload_transfer.packet_type == Some(3) || (payload_transfer.packet_type == Some(PacketType::Control.into()) && payload_transfer.control_message.as_ref().is_some_and(|c| c.event == Some(3))) {
+                    self.pending_payloads.remove(&header.id());
+                    if self.completion_deadline.is_some() && self.pending_payloads.is_empty() {
+                        return self.confirm_completion().await;
+                    }
+                    return Ok(());
+                }
+                if payload_transfer.packet_type == Some(PacketType::Control.into()) {
+                    return Err(anyhow!("Receiver rejected payload {}: {:?}", header.id(), payload_transfer.control_message));
+                }
                 let chunk = payload_transfer
                     .payload_chunk
                     .as_ref()
@@ -537,6 +555,12 @@ impl OutboundRequest {
                         )
                     }
                 }
+            }
+            location_nearby_connections::v1_frame::FrameType::Disconnection => {
+                if self.completion_deadline.is_some() {
+                    return self.confirm_completion().await;
+                }
+                return Err(anyhow!("Receiver disconnected before all payloads were sent"));
             }
             location_nearby_connections::v1_frame::FrameType::KeepAlive => {
                 trace!("Sending keepalive");
@@ -745,6 +769,7 @@ impl OutboundRequest {
         )
         .await;
 
+        self.pending_payloads = file_metadata.iter().map(|m| m.payload_id()).chain(text_metadata.iter().map(|m| m.payload_id())).collect();
         let introduction = sharing_nearby::Frame {
             version: Some(sharing_nearby::frame::Version::V1.into()),
             v1: Some(sharing_nearby::V1Frame {
@@ -788,12 +813,8 @@ impl OutboundRequest {
                     let bytes = text.as_bytes().to_vec();
                     let id = self.state.text_payload.as_ref().ok_or_else(|| anyhow!("Missing text payload"))?.get_i64_value();
                     self.send_bytes_payload(id, bytes).await?;
-                    self.update_state(|s| {
-                        if let Some(meta) = s.transfer_metadata.as_mut() { meta.ack_bytes = meta.total_bytes; }
-                        s.state = State::Finished;
-                    }, true).await;
-                    self.disconnection().await?;
-                    return Err(anyhow!(crate::errors::AppError::NotAnError));
+                    self.completion_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+                    return Ok(());
                 }
                 let ids: Vec<i64> = self.state.transferred_files.keys().cloned().collect();
                 info!("We are sending: {:?}", ids);
@@ -804,15 +825,8 @@ impl OutboundRequest {
                         Some(i) => i,
                         None => {
                             info!("All files have been transferred");
-                            self.update_state(
-                                |e| {
-                                    e.state = State::Finished;
-                                },
-                                true,
-                            )
-                            .await;
-                            self.disconnection().await?;
-                            return Err(anyhow!(crate::errors::AppError::NotAnError));
+                            self.completion_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+                            return Ok(());
                         }
                     };
 
@@ -859,7 +873,7 @@ impl OutboundRequest {
 
                             let remaining =
                                 (curr_state.total_size - curr_state.bytes_transferred) as usize;
-                            let mut buffer = vec![0u8; remaining.min(512 * 1024)];
+                            let mut buffer = vec![0u8; remaining.min(64 * 1024)];
                             let bytes_read = curr_state.file.as_ref().unwrap().read(&mut buffer)?;
                             if bytes_read == 0 && remaining != 0 {
                                 return Err(anyhow!("Source file changed during transfer"));
@@ -999,6 +1013,15 @@ impl OutboundRequest {
                 return Err(anyhow!(crate::errors::AppError::NotAnError));
             }
         }
+    }
+
+    async fn confirm_completion(&mut self) -> Result<(), anyhow::Error> {
+        self.update_state(|s| {
+            s.state = State::Finished;
+            if let Some(meta) = s.transfer_metadata.as_mut() { meta.ack_bytes = meta.total_bytes; }
+        }, true).await;
+        self.disconnection().await?;
+        Err(anyhow!(crate::errors::AppError::NotAnError))
     }
 
     async fn disconnection(&mut self) -> Result<(), anyhow::Error> {

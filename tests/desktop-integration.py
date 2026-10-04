@@ -97,7 +97,7 @@ def main():
         (data / "applications/ghostshare-test.desktop").write_text(f'[Desktop Entry]\nType=Application\nName=Test open handler\nExec=python3 "{handler}" "{opened}" %u\nMimeType=text/plain;inode/directory;\nNoDisplay=true\n')
         (config / "mimeapps.list").write_text("[Default Applications]\ntext/plain=ghostshare-test.desktop;\ninode/directory=ghostshare-test.desktop;\n")
         receiver_port = port()
-        app = subprocess.Popen(["./zig-out/bin/ghostshare"], env=dict(os.environ, GHOSTFILE_PORT=str(receiver_port), GHOSTFILE_DOWNLOAD_DIR=str(folder / "received"), XDG_DATA_HOME=str(data), XDG_CONFIG_HOME=str(config)), stdout=open("artifacts/desktop.log", "w"), stderr=subprocess.STDOUT)
+        app = subprocess.Popen(["./zig-out/bin/ghostshare"], env=dict(os.environ, GHOSTFILE_PORT=str(receiver_port), GHOSTFILE_DOWNLOAD_DIR=str(folder / "received"), XDG_DATA_HOME=str(data), XDG_CONFIG_HOME=str(config), XDG_STATE_HOME=str(folder / "state")), stdout=open("artifacts/desktop.log", "w"), stderr=subprocess.STDOUT)
         sender, child = mp.Pipe()
         sender_port = port()
         engine = mp.Process(target=worker, args=(child, folder / "sender", sender_port))
