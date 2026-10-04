@@ -22,9 +22,15 @@ if "ZIG_GLOBAL_CACHE_DIR" in os.environ:
     candidate_dirs.append(Path(os.environ["ZIG_GLOBAL_CACHE_DIR"]))
 
 scripts = []
+seen = set()
 for d in candidate_dirs:
-    if d.is_dir():
-        scripts.extend(d.rglob("installer.nsi"))
+    try:
+        resolved = d.resolve()
+    except Exception:
+        resolved = d
+    if resolved.is_dir() and resolved not in seen:
+        seen.add(resolved)
+        scripts.extend(resolved.rglob("installer.nsi"))
 if not scripts:
     scripts.extend(Path("..").rglob("installer.nsi"))
 if not scripts:
@@ -39,8 +45,8 @@ if not payload or not installer:
 with tempfile.TemporaryDirectory(prefix="ghostshare-sign-", dir=os.environ["RUNNER_TEMP"]) as temporary:
     certificate = Path(temporary) / "codesign.pfx"
     certificate.write_bytes(base64.b64decode(os.environ["ORIEL_WINDOWS_CERT_P12_BASE64"], validate=True))
-    # Trust only on this disposable runner for self-signed chain verification.
-    ps = "$c=[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($env:GHOSTFILE_CERT,$env:ORIEL_WINDOWS_CERT_PASSWORD); $s=[System.Security.Cryptography.X509Certificates.X509Store]::new('Root','CurrentUser'); $s.Open('ReadWrite'); $s.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($c.RawData)); $s.Close()"
+    # Trust on LocalMachine (avoids modal confirmation dialog on Windows headless runner)
+    ps = "$c=[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($env:GHOSTFILE_CERT,$env:ORIEL_WINDOWS_CERT_PASSWORD); $s=[System.Security.Cryptography.X509Certificates.X509Store]::new('Root','LocalMachine'); $s.Open('ReadWrite'); $s.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($c.RawData)); $s.Close()"
     subprocess.run(["pwsh", "-NoProfile", "-Command", ps], env=dict(os.environ, GHOSTFILE_CERT=str(certificate)), check=True)
     def sign(path):
         result = subprocess.run([signtool, "sign", "/f", str(certificate), "/p", os.environ["ORIEL_WINDOWS_CERT_PASSWORD"], "/fd", "SHA256", "/tr", "https://timestamp.digicert.com", "/td", "SHA256", str(path)])
