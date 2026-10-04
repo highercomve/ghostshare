@@ -4,10 +4,11 @@ A native Oriel desktop app for sharing files over your local network with other 
 
 ## Run
 
-Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. Oriel 0.8.0 is pinned by commit and Zig package hash; a sibling framework checkout is not required.
+Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostFile uses the Oriel development checkout at `../oriel` (locally `/home/projects/personal/oriel`). CI waits for the official `v0.9.0` tag, checks out that release alongside GhostFile, and builds its CLI from source. Platform builds are skipped while that Oriel release is pending.
 
 ```sh
-oriel build -Dnative_ui
+python3 scripts/setup-oriel.py
+../oriel/zig-out/bin/oriel build -Dnative_ui
 ./zig-out/bin/ghostfile
 ```
 
@@ -52,7 +53,7 @@ Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting
 
 ## CI and signed releases
 
-[GitHub Actions](https://github.com/highercomve/ghostfile/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. A manual workflow with `sign=true` verifies signed builds without publishing.
+[GitHub Actions](https://github.com/highercomve/ghostfile/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. After Oriel 0.9.0 is published, a manual workflow with `sign=true` verifies signed builds without publishing.
 
 Certificates generated with `oriel signing create` are persistent, self-signed identities. They do not establish public SmartScreen/Gatekeeper trust or Apple notarization. Keep the originals and passwords in `~/.config/oriel/keys` backed up privately; never regenerate for routine releases.
 

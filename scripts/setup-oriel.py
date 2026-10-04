@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
-"""Install the pinned Oriel CLI, checking its release checksum."""
-import hashlib
+"""Build the CLI from the same development checkout as the app framework."""
 import os
 from pathlib import Path
-import platform
-import urllib.request
+import subprocess
 
-VERSION = "v0.8.0"
-arch = {"AMD64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}[platform.machine()]
-system = {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}[platform.system()]
-name = f"oriel-{arch}-{system}" + (".exe" if system == "windows" else "")
-base = f"https://github.com/highercomve/Oriel/releases/download/{VERSION}"
-checksums = urllib.request.urlopen(base + "/SHA256SUMS", timeout=60).read().decode()
-expected = dict((line.split()[1].lstrip("*"), line.split()[0]) for line in checksums.splitlines())[name]
-data = urllib.request.urlopen(base + "/" + name, timeout=120).read()
-if hashlib.sha256(data).hexdigest() != expected:
-    raise SystemExit("Oriel checksum mismatch")
-folder = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "ghostfile-oriel"
-folder.mkdir(parents=True, exist_ok=True)
-output = folder / ("oriel.exe" if system == "windows" else "oriel")
-output.write_bytes(data)
-output.chmod(0o755)
+framework = Path("../oriel").resolve()
+if not (framework / "build.zig").is_file():
+    raise SystemExit("Oriel development checkout is required at ../oriel")
+revision = subprocess.check_output(["git", "-C", str(framework), "rev-parse", "HEAD"], text=True).strip()
+expected = os.environ.get("ORIEL_REF")
+if expected:
+    requested = subprocess.check_output(["git", "-C", str(framework), "rev-parse", expected + "^{commit}"], text=True).strip()
+    if revision != requested:
+        raise SystemExit("Oriel checkout does not match the requested CI revision")
+subprocess.run(["zig", "build", "cli", "-Doptimize=ReleaseSafe"], cwd=framework, check=True)
+folder = framework / "zig-out/bin"
 if os.environ.get("GITHUB_PATH"):
     with open(os.environ["GITHUB_PATH"], "a") as file:
         file.write(str(folder) + "\n")
-print(f"Installed Oriel {VERSION} ({arch}-{system}); SHA-256 verified")
+print("Built Oriel development CLI from " + revision)

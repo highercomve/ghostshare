@@ -195,7 +195,7 @@ $("quit").addEventListener("click", () => call("quit"));
 
 let update_busy = false, update_android = false, update_version = "";
 async function check_updates() {
-  if (update_busy) return;
+  if (update_busy || !$("update-restart").hidden) return;
   update_busy = true; $("update-check").disabled = true;
   $("update-status").textContent = "Checking for updates…";
   try {

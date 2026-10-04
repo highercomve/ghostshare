@@ -107,8 +107,7 @@ export fn ghostfile_theme_changed(dark: c_int) void {
     oriel.App.events(Events).emit(.system_theme, .{ .dark = dark != 0 });
 }
 export fn ghostfile_review_transfer(id: [*:0]const u8) void {
-    show_window();
-    oriel.App.events(Events).emit(.review_request, .{ .id = std.mem.span(id) });
+    notification_action(std.mem.span(id), null);
 }
 const NotificationEvent = struct { bytes: [4096]u8, len: usize };
 fn transfer_event(json: [*:0]const u8) callconv(.c) void {
@@ -123,13 +122,26 @@ fn notify_main(event: NotificationEvent) void {
     defer arena.deinit();
     const allocator = arena.allocator();
     const parsed = std.json.parseFromSlice(struct { id: []const u8, kind: []const u8, name: []const u8 }, allocator, event.bytes[0..event.len], .{}) catch return;
-    const id = allocator.dupeZ(u8, parsed.value.id) catch return;
-    const kind = allocator.dupeZ(u8, parsed.value.kind) catch return;
-    const name = allocator.dupeZ(u8, parsed.value.name) catch return;
-    if (desktop_linux) {
+    const dismiss = std.mem.eql(u8, parsed.value.kind, "dismiss");
+    if (desktop_linux and (dismiss or !@hasDecl(oriel.notification, "onAction"))) {
+        const id = allocator.dupeZ(u8, parsed.value.id) catch return;
+        const kind = allocator.dupeZ(u8, parsed.value.kind) catch return;
+        const name = allocator.dupeZ(u8, parsed.value.name) catch return;
         ghostfile_desktop_notify(id, kind, name);
-    } else if (!std.mem.eql(u8, parsed.value.kind, "dismiss")) {
-        oriel.notification.notify(.{ .id = parsed.value.id, .title = "GhostFile", .body = if (std.mem.eql(u8, parsed.value.kind, "request")) "Incoming files. Open GhostFile to review and accept." else "Files received." }) catch {};
+        return;
+    }
+    if (dismiss) return;
+    const incoming = std.mem.eql(u8, parsed.value.kind, "request");
+    const body = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ if (incoming) "" else "Files from ", parsed.value.name, if (incoming) " wants to share files. Review the code and choose where to save." else " are ready. Open GhostFile to view them." }) catch return;
+    if (@hasDecl(oriel.notification, "onAction")) {
+        oriel.notification.notify(.{
+            .id = parsed.value.id,
+            .title = if (incoming) "Incoming files" else "Files received",
+            .body = body,
+            .actions = if (incoming) &.{.{ .id = "review", .label = "Review request" }} else &.{},
+        }) catch {};
+    } else {
+        oriel.notification.notify(.{ .id = parsed.value.id, .title = if (incoming) "Incoming files" else "Files received", .body = body }) catch {};
     }
 }
 fn notification_action(id: []const u8, action: ?[]const u8) void {
@@ -232,6 +244,7 @@ pub fn main(init: std.process.Init) !u8 {
     defer ghostfile_stop();
     defer {
         ghostfile_set_event_callback(null);
+        if (@hasDecl(oriel.notification, "onAction")) oriel.notification.onAction(null);
         if (tray) |icon| icon.deinit();
         if (desktop_linux) ghostfile_desktop_cleanup();
     }

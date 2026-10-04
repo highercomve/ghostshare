@@ -86,6 +86,18 @@ pub fn build(b: *std.Build) void {
         for ([_][]const u8{ "ws2_32", "userenv", "bcrypt", "ntdll", "iphlpapi", "psapi" }) |library| application.exe.root_module.linkSystemLibrary(library, .{});
     }
     if (target.result.os.tag == .macos) application.exe.root_module.linkFramework("CoreBluetooth", .{});
+    const verifier = b.addExecutable(.{
+        .name = "verify-updates",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/verify-updates.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .imports = &.{.{ .name = "manifest", .module = b.createModule(.{ .root_source_file = dep.path("src/modules/update_manifest.zig") }) }},
+        }),
+    });
+    const verify = b.addRunArtifact(verifier);
+    if (b.args) |args| verify.addArgs(args);
+    b.step("verify-updates", "Verify signed release manifests and update payloads").dependOn(&verify.step);
     const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostfile-quickshare" });
     b.step("test", "Test the Quick Share bridge").dependOn(&tests.step);
 }

@@ -5,7 +5,7 @@
     .fingerprint = 0x8cc4afad3f577d24,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .oriel = .{ .url = "git+https://github.com/highercomve/Oriel#d893685a9bb8bfd475ebddfb678b300dadd7da14", .hash = "oriel-0.8.0-K1NO5dq8jwCOExUh_0h4N6-lV8cQlaCXAr88dukQGkoc" },
+        .oriel = .{ .path = "../oriel" },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "frontend", "README.md", "native", "vendor", "Cargo.toml", "Cargo.lock", "LICENSE", "icon.png", "tests", "install-local.sh" },
 }
