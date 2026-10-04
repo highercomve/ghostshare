@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const desktop_linux = builtin.os.tag == .linux and builtin.abi != .android;
 const app = @import("oriel_app");
 const updates = @import("updates.zig");
+const cli = @import("cli.zig");
 
 pub const std_options: std.Options = .{ .logFn = oriel.log.logFn };
 extern fn ghostshare_start(directory: [*:0]const u8) ?[*:0]u8;
@@ -307,6 +308,17 @@ pub const Commands = struct {
     }
 };
 pub fn main(init: std.process.Init) !u8 {
+    if (builtin.abi != .android) {
+        const arena = init.arena.allocator();
+        const all_args = try init.minimal.args.toSlice(arena);
+        const argv = try arena.alloc([]const u8, all_args.len -| 1);
+        for (argv, 1..) |*a, i| a.* = all_args[i];
+
+        if (cli.isCliCommand(argv)) {
+            return cli.run(init, argv);
+        }
+    }
+
     const directory = if (builtin.abi == .android) try std.fs.path.join(init.arena.allocator(), &.{ oriel.platform.impl.paths.externalFilesDir() orelse return error.MissingAndroidStorage, "Received" }) else "";
     const directory_z = try init.arena.allocator().dupeZ(u8, directory);
     const response = ghostshare_start(directory_z) orelse return error.QuickShareUnavailable;

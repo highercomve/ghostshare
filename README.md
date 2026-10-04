@@ -34,6 +34,31 @@ appears as **GhostShare** in your application menu. The installer replaces the p
 Use `./install-local.sh --skip-build` to install the existing build. Additional
 Zig options can be forwarded, for example `./install-local.sh -Doptimize=ReleaseFast`.
 
+
+## Command-line interface (CLI)
+
+GhostShare includes a headless CLI mode for terminal users, scripts, and autonomous agents to discover devices, send files or text to Android phones and computers, and receive files without opening a graphical window:
+
+```sh
+# Scan for nearby Quick Share receivers
+ghostshare scan
+
+# Send files to a device by name or direct IP:port
+ghostshare send ./report.pdf --to "Pixel 8"
+ghostshare send image1.png image2.png --to 192.168.1.50:53601
+
+# Send text or a link
+ghostshare send-text "https://github.com/highercomve/ghostshare" --to "Pixel 8"
+
+# Pipe text from stdin (great for agent logs, output, or clipboard contents)
+cat summary.txt | ghostshare send-text - --to "Pixel 8"
+
+# Run a headless receiver saving to a custom folder
+ghostshare receive --dir ~/Downloads/Shared --auto-accept
+```
+
+CLI commands bind ephemeral ports and run with receiver visibility disabled during send, allowing them to run alongside the desktop GUI without port collisions.
+
 ## Share
 
 1. Open GhostShare on both computers, or open Android Quick Share’s receiving screen on the phone. Keep both devices on the same LAN/Wi-Fi network.
