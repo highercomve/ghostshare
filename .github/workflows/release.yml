@@ -1,0 +1,172 @@
+name: Build and release
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+env:
+  ZIG_VERSION: 0.16.0
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: System dependencies
+        run: pacman -Syu --noconfirm --needed git openssh ca-certificates curl pkgconf gtk4 webkitgtk-6.0 wayland wayland-protocols libxkbcommon libxtst libx11 dbus ttf-dejavu python rust protobuf base-devel xorg-server-xvfb xdotool imagemagick
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: python scripts/setup-oriel.py
+      - name: Rust and protocol tests
+        run: cargo test --locked -p ghostfile-quickshare -p rqs_lib
+      - name: Oriel packages (native UI)
+        run: oriel package -Dnative_ui -Doptimize=ReleaseSafe
+      - name: Encrypted transfer integration tests
+        run: python tests/quickshare_loopback.py
+      - run: python scripts/collect-release.py linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/
+          if-no-files-found: error
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: brew install protobuf
+      - run: python3 scripts/setup-oriel.py
+      - name: Import persistent signing identity
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          CERT: ${{ secrets.ORIEL_MACOS_CERT_P12_BASE64 }}
+          ORIEL_MACOS_CERT_PASSWORD: ${{ secrets.ORIEL_MACOS_CERT_PASSWORD }}
+        run: |
+          test -n "$CERT" && test -n "$ORIEL_MACOS_CERT_PASSWORD"
+          umask 077
+          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/ghostfile.p12"
+          oriel signing import "$RUNNER_TEMP/ghostfile.p12" --password-env ORIEL_MACOS_CERT_PASSWORD
+      - name: Tests
+        run: cargo test --locked -p ghostfile-quickshare -p rqs_lib
+      - name: Oriel packages
+        env:
+          ORIEL_MACOS_SIGN_IDENTITY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.ORIEL_MACOS_SIGN_IDENTITY || '' }}
+        run: oriel package -Dnative_ui -Doptimize=ReleaseSafe
+      - name: Verify signed app
+        if: startsWith(github.ref, 'refs/tags/')
+        run: codesign --verify --deep --strict zig-out/package/GhostFile.app
+      - name: Remove imported keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/ghostfile.p12"
+          security delete-keychain oriel-signing.keychain-db || true
+      - run: python3 scripts/collect-release.py macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/
+          if-no-files-found: error
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Dependencies
+        run: |
+          choco install protoc nsis mingw --no-progress -y
+          rustup target add x86_64-pc-windows-gnu
+          Add-Content $env:GITHUB_PATH 'C:\Program Files (x86)\NSIS'
+      - run: python scripts/setup-oriel.py
+      - name: Oriel packages
+        run: oriel package -Dnative_ui -Doptimize=ReleaseSafe -Dtarget=x86_64-windows-gnu -Drust-target=x86_64-pc-windows-gnu
+      - name: Sign app and installer
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          ORIEL_WINDOWS_CERT_P12_BASE64: ${{ secrets.ORIEL_WINDOWS_CERT_P12_BASE64 }}
+          ORIEL_WINDOWS_CERT_PASSWORD: ${{ secrets.ORIEL_WINDOWS_CERT_PASSWORD }}
+        run: python scripts/sign-windows.py
+      - run: python scripts/collect-release.py windows-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/
+          if-no-files-found: error
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked
+          sdkmanager 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - run: python3 scripts/setup-oriel.py
+      - run: oriel android init
+      - name: Signed APK and AAB
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          KEYSTORE: ${{ secrets.ORIEL_ANDROID_KEYSTORE_BASE64 }}
+          ORIEL_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ORIEL_ANDROID_KEYSTORE_PASSWORD }}
+          ORIEL_ANDROID_KEY_ALIAS: ${{ secrets.ORIEL_ANDROID_KEY_ALIAS }}
+          ORIEL_ANDROID_KEY_PASSWORD: ${{ secrets.ORIEL_ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE" && test -n "$ORIEL_ANDROID_KEYSTORE_PASSWORD" && test -n "$ORIEL_ANDROID_KEY_ALIAS" && test -n "$ORIEL_ANDROID_KEY_PASSWORD"
+          umask 077
+          export ORIEL_ANDROID_KEYSTORE="$RUNNER_TEMP/ghostfile.keystore"
+          trap 'rm -f "$ORIEL_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE" | base64 --decode > "$ORIEL_ANDROID_KEYSTORE"
+          oriel android build -Dnative_ui -Doptimize=ReleaseSafe
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify android/app/build/outputs/apk/release/app-release.apk
+      - name: Unsigned CI APK and AAB
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: oriel android build -Dnative_ui -Doptimize=ReleaseSafe
+      - run: python3 scripts/collect-release.py android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, macos, windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --title "GhostFile $RELEASE_TAG"

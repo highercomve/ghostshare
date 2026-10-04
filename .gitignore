@@ -1,0 +1,15 @@
+.zig-cache/
+zig-out/
+target/
+artifacts/
+__pycache__/
+zig-pkg/
+vendor/rquickshare/target/
+dist/
+android/
+*.p12
+*.pfx
+*.keystore
+*.password
+.env
+.env.*

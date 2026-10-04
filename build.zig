@@ -1,0 +1,85 @@
+const std = @import("std");
+const oriel = @import("oriel");
+
+pub fn build(b: *std.Build) void {
+    // On macOS, a target without a version builds for macOS 13+ (not just
+    // the Mac building it); pass this target to every executable you add.
+    const target = oriel.resolveTarget(b, b.standardTargetOptions(.{}));
+    const optimize = b.standardOptimizeOption(.{});
+    const android = target.result.abi == .android;
+    // Oriel's built-in modules and plugins. Switch on what the app uses:
+    // anything left off is neither compiled nor linked.
+    const dep = b.dependency("oriel", .{
+        .target = target,
+        .optimize = optimize,
+        .tray = true,
+        .menu = false,
+        .store = false,
+        .dialog = true,
+        .native_ui = b.option(bool, "native_ui", "Use the native renderer") orelse true,
+        .notification = true,
+        .updater = false,
+        .sql = false,
+        .fs_watch = false,
+        .media_server = false,
+        .global_shortcut = false,
+        .input = false,
+        .clipboard = false,
+    });
+
+    // Frontend in frontend/ (embeds frontend/ as-is).
+    // zig build          production build
+    // zig build run      run it
+    // zig build check    type-check src/ without building
+    // zig build package  installers: deb/rpm/AppImage (Linux), setup.exe (Windows), .app/.dmg (macOS)
+    const application = oriel.addApp(b, dep, .{
+        .name = "ghostfile",
+        .root_source_file = b.path("src/main.zig"),
+        .icon = b.path("icon.png"), // High-resolution PNG (1024x1024 recommended)
+        .frontend = .{
+            // A static page: embedded as-is, no npm and no dev server.
+            .dir = "frontend",
+            .dist = ".",
+            .build_command = null,
+            .install_command = null,
+            .dev = null,
+            .types_path = null,
+        },
+        .permissions = .{ .notifications = "Notify you when files arrive" },
+        .package = .{
+            .id = "dev.ghostfile.App",
+            .name = "GhostFile",
+            // .publisher = "Your Name <you@example.com>", // default: from the app id
+            .summary = "Share files with computers and Android Quick Share",
+            .version = "0.1.0",
+        },
+        // The isolation pattern: every call from the frontend to Zig goes
+        // through isolation/hook.js first, in a frame the page can't reach.
+        // .isolation = .{ .hook = b.path("isolation/hook.js") },
+    });
+    // Cargo resolves the host Rust toolchain. Cross compilation requires a
+    // matching Rust target and target libraries; this build supports the host.
+    const rust_target = b.option([]const u8, "rust-target", "Rust target triple (required for desktop cross compilation)");
+    const cargo = if (android) b.addSystemCommand(&.{ "cargo", "ndk", "--platform", "29", "--target", if (target.result.cpu.arch == .aarch64) "arm64-v8a" else "x86_64", "build" }) else b.addSystemCommand(&.{ "cargo", "build" });
+    cargo.addArgs(&.{ "--locked", "--release", "--package", "ghostfile-quickshare", "--target-dir", b.pathFromRoot("target") });
+    if (android) cargo.addArg("--no-default-features");
+    if (!android) if (rust_target) |triple| cargo.addArgs(&.{ "--target", triple });
+    const triple = if (android) (if (target.result.cpu.arch == .aarch64) "aarch64-linux-android" else "x86_64-linux-android") else rust_target;
+    const library_name = if (target.result.os.tag == .windows and target.result.abi == .msvc) "ghostfile_quickshare.lib" else "libghostfile_quickshare.a";
+    const library_path = if (triple) |t| b.fmt("target/{s}/release/{s}", .{ t, library_name }) else b.fmt("target/release/{s}", .{library_name});
+    application.exe.root_module.addObjectFile(b.path(library_path));
+    application.exe.step.dependOn(&cargo.step);
+    if (target.result.os.tag == .linux and !android) {
+        application.exe.root_module.addCSourceFile(.{ .file = b.path("src/desktop_linux.c"), .flags = &.{"-std=c11"} });
+        application.exe.root_module.linkSystemLibrary("gtk4", .{});
+        application.exe.root_module.linkSystemLibrary("dbus-1", .{});
+        application.exe.root_module.linkSystemLibrary("pthread", .{});
+        application.exe.root_module.linkSystemLibrary("dl", .{});
+        application.exe.root_module.linkSystemLibrary("m", .{});
+    }
+    if (target.result.os.tag == .windows) {
+        for ([_][]const u8{ "ws2_32", "userenv", "bcrypt", "ntdll", "iphlpapi", "psapi" }) |library| application.exe.root_module.linkSystemLibrary(library, .{});
+    }
+    const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostfile-quickshare" });
+    b.step("test", "Test the Quick Share bridge").dependOn(&tests.step);
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>GhostFile</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<div class="app">
+<header>
+  <div class="brand"><svg width="36" height="40" viewBox="0 0 36 40" fill="none"><path d="M6 33V17a12 12 0 0 1 24 0v16l-6-4-6 4-6-4-6 4Z" fill="#e36749"/><circle cx="14" cy="17" r="2" fill="#fff7ed"/><circle cx="23" cy="17" r="2" fill="#fff7ed"/></svg><span>GhostFile</span></div>
+  <button id="visibility" class="presence" aria-label="Toggle device visibility">Starting Quick Share…</button>
+</header>
+<main>
+<div class="intro"><div><p class="eyebrow">A LITTLE CLOSER. A LOT EASIER.</p><h1>From here<br>to over there.</h1><p class="lede">Share files with your computers and Android.<br>Same network. No accounts. Just Quick Share.</p></div><div class="connection-art" aria-hidden="true"><div class="orbit"><span class="orbit-center">↗</span></div><span class="art-caption">GOOD THINGS TRAVEL.</span></div></div>
+<div id="error" class="notice error" role="alert" hidden></div>
+<div id="requests"></div>
+<div class="workspace">
+<section class="panel files-panel"><div class="section-top"><h2>01 <span>Choose your files</span></h2><button id="clear" class="text-button" hidden>Clear</button></div>
+<div id="file-list"></div>
+<div id="file-empty" class="file-empty"><div class="file-symbol">＋</div><h3>A small file. A big idea.</h3><p>Pick something to send, then choose<br>where it should go.</p></div>
+<button id="choose" class="primary">Choose files <span>＋</span></button><p class="caption">Add files one at a time. Send them together.</p></section>
+<section class="panel devices-panel"><div class="section-top"><h2>02 <span>Choose a device</span></h2><span id="peer-count" class="count">0</span></div>
+<div id="peers"></div>
+<div id="peer-empty" class="peer-empty"><div class="search-mark">◎</div><h3>Looking around…</h3><p>Open GhostFile on your other computer, or open Quick Share on Android and turn on receiving.</p><p class="small">Keep both devices on the same Wi-Fi network. Bluetooth helps Android discovery.</p></div>
+<div class="manual"><label for="address">Have an address?</label><div class="manual-row"><input id="address" placeholder="192.168.1.20:54321" aria-label="Device IP address and port"><button id="manual-send" class="secondary" disabled>Send ↗</button></div><p class="small">The destination must speak Quick Share.</p></div></section>
+</div>
+<section class="activity"><div class="section-top"><h2>Activity</h2><span class="small">Direct, encrypted transfers</span></div><div id="transfers"><p class="activity-empty">Your files’ next adventure starts here.</p></div></section>
+<p class="background-note small">Close the window to keep receiving. Use the tray to send files or reopen GhostFile. <button id="quit" class="text-button">Quit GhostFile</button></p>
+</main>
+<footer><span id="identity">Connecting…</span><span id="downloads">Received files stay on this computer.</span></footer>
+</div><script src="app.js"></script>
+</body></html>
