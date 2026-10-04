@@ -152,8 +152,8 @@ static gboolean quit_idle(gpointer data) {
 void ghostfile_desktop_quit(void) {
     GListModel *windows = gtk_window_get_toplevels();
     guint count = g_list_model_get_n_items(windows);
-    for (guint index = 0; index < count; index++) {
-        GtkWindow *window = g_list_model_get_item(windows, index);
+    for (guint index = count; index > 0; index--) {
+        GtkWindow *window = g_list_model_get_item(windows, index - 1);
         if (window != parent) gtk_window_close(window);
         g_object_unref(window);
     }

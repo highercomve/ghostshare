@@ -110,18 +110,28 @@ def main():
             pump(visible)
             time.sleep(1)
             command("import", "-window", "root", "artifacts/incoming-ui.png")
-            # Approval and folder-picker steps are exercised interactively below.
-            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "2", "clicked", "<0>", "0")
-            pump(lambda: subprocess.run(["xdotool", "search", "--name", "Choose a file to share"], capture_output=True).returncode == 0)
-            dialog = command("xdotool", "search", "--name", "Choose a file to share").splitlines()[0]
-            command("xdotool", "windowfocus", "--sync", dialog)
+            command("xdotool", "mousemove", "--window", window, "284", "526", "click", "1")
+            pump(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Save incoming files"], capture_output=True).returncode == 0)
+            folder_dialog = command("xdotool", "search", "--onlyvisible", "--name", "Save incoming files").splitlines()[0]
+            command("xdotool", "windowfocus", "--sync", folder_dialog)
             command("xdotool", "key", "Escape")
-            pump(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Choose a file to share"], capture_output=True).returncode != 0)
+            pump(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Save incoming files"], capture_output=True).returncode != 0)
+            assert not list((folder / "received").iterdir()), "Cancelling the folder picker must leave approval pending"
             time.sleep(.5)
+            command("xdotool", "mousemove", "--window", window, "138", "526", "click", "1")
+            pump(lambda: (folder / "received" / path.name).exists() and (folder / "received" / path.name).read_bytes() == path.read_bytes())
+            pump(lambda: len(notifications) >= 2)
+            assert notifications[-1][3] == "Files received"
+            command("xdotool", "mousemove", "--window", window, "900", "700", "click", "5", "click", "5")
+            time.sleep(.5)
+            command("import", "-window", "root", "artifacts/received-ui.png")
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "2", "clicked", "<0>", "0")
+            pump(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Choose a file to share"], capture_output=True).returncode == 0)
+            # Quitting from the tray must cancel an open picker and stop cleanly.
             dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "4", "clicked", "<0>", "0")
             pump(lambda: app.poll() is not None)
             assert app.returncode == 0
-            print("PASS: tray menu, background receiving, notification click, consent remains pending, tray send, live system theme, clean quit")
+            print("PASS: background receiving, clickable notifications, folder picker cancellation, default consent, tray send, live theme, quit with picker open")
         finally:
             if app.poll() is None:
                 app.kill(); app.wait(8)
