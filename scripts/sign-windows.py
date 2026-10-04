@@ -11,7 +11,26 @@ import tempfile
 sdk = Path(os.environ["ProgramFiles(x86)"]) / "Windows Kits/10/bin"
 signtool = str(sorted(sdk.glob("*/x64/signtool.exe"))[-1])
 makensis = shutil.which("makensis") or str(Path(os.environ["ProgramFiles(x86)"]) / "NSIS/makensis.exe")
-script = max(Path(".zig-cache").rglob("installer.nsi"), key=lambda p: p.stat().st_mtime)
+
+candidate_dirs = [
+    Path(".zig-cache"),
+    Path("../.zig-cache"),
+]
+if "ZIG_LOCAL_CACHE_DIR" in os.environ:
+    candidate_dirs.append(Path(os.environ["ZIG_LOCAL_CACHE_DIR"]))
+if "ZIG_GLOBAL_CACHE_DIR" in os.environ:
+    candidate_dirs.append(Path(os.environ["ZIG_GLOBAL_CACHE_DIR"]))
+
+scripts = []
+for d in candidate_dirs:
+    if d.is_dir():
+        scripts.extend(d.rglob("installer.nsi"))
+if not scripts:
+    scripts.extend(Path("..").rglob("installer.nsi"))
+if not scripts:
+    raise SystemExit("Could not find installer.nsi in any cache directory")
+
+script = max(scripts, key=lambda p: p.stat().st_mtime)
 text = script.read_text()
 payload = re.search(r'^!define BINARY_SRC\s+"([^"]+)"', text, re.M)
 installer = re.search(r'^!define OUT_FILE\s+"([^"]+)"', text, re.M)
@@ -29,8 +48,10 @@ with tempfile.TemporaryDirectory(prefix="ghostshare-sign-", dir=os.environ["RUNN
         subprocess.run([signtool, "verify", "/pa", str(path)], check=True)
     binary = Path(payload.group(1).replace("$$", "$"))
     sign(binary)
+    Path("zig-out/bin").mkdir(parents=True, exist_ok=True)
     shutil.copy2(binary, "zig-out/bin/ghostshare.exe")
     subprocess.run([makensis, "/NOCD", "/WX", str(script.resolve())], check=True)
     setup = Path(installer.group(1).replace("$$", "$"))
     sign(setup)
+    Path("zig-out/package").mkdir(parents=True, exist_ok=True)
     shutil.copy2(setup, Path("zig-out/package") / setup.name)
