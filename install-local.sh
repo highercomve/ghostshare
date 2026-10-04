@@ -31,7 +31,7 @@ if ! "$skip_build"; then
 fi
 
 source_binary="$project_dir/zig-out/bin/ghostshare"
-if [[ ! -x "$source_binary" || ! -f "$project_dir/icon.png" ]]; then
+if [[ ! -x "$source_binary" || ! -f "$project_dir/assets/brand/ghostshare-icon.png" ]]; then
     printf 'Missing GhostShare binary or icon. Run this script without --skip-build.\n' >&2
     exit 1
 fi
@@ -51,7 +51,7 @@ mkdir -p -- "$bin_dir" "$desktop_dir" "$icon_dir"
 staging_dir=$(mktemp -d "$bin_dir/.ghostshare-install.XXXXXX")
 trap 'rm -rf -- "$staging_dir"' EXIT
 install -m 755 -- "$source_binary" "$staging_dir/ghostshare"
-install -m 644 -- "$project_dir/icon.png" "$staging_dir/$app_id.png"
+install -m 644 -- "$project_dir/assets/brand/ghostshare-icon.png" "$staging_dir/$app_id.png"
 
 # Escape the Exec argument, then the desktop-entry string. Percent signs
 # must be doubled so paths containing them are not interpreted as field codes.

@@ -55,7 +55,7 @@ Verified on Linux: native rendering and file selection, live Android discovery, 
 
 ## Appearance and background receiving
 
-Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostShare receiving; the tray offers Show, Send files, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Incoming notifications show the confirmation PIN and offer Review request, Accept to default, and Decline. Review opens the window to choose a save location. Completed notifications offer Open file and Open folder. No request is automatically accepted. Use Quit GhostShare in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
+Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostShare receiving; the tray offers Show, Send files, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Incoming notifications show the confirmation PIN and offer Accept, Review, and Deny. Accept saves to the default folder. Review opens the window to choose a save location. Completed notifications offer Open file and Open folder. No request is automatically accepted. Use Quit GhostShare in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
 
 ## CI and signed releases
 
@@ -71,6 +71,10 @@ Required repository secrets:
 - Updater: `ORIEL_UPDATE_KEY` (base64 Ed25519 seed). The public key is committed in `src/update-public-key.txt`.
 
 Signing material is supplied only to trusted tag or explicitly signed manual builds, decoded into runner temporary directories, and removed after use. Local environment variables are not committed. Windows signs both the app payload and the rebuilt Oriel NSIS installer. Linux packages include SHA-256 checksums.
+
+## Logo
+
+The coral ghost carries a sharing arrow. Scalable SVG sources and launcher/tray PNGs are in [`assets/brand`](assets/brand/README.md). The header, desktop icon and tray use this mark.
 
 ## Updates
 
@@ -88,7 +92,7 @@ cargo test --locked --package rqs_lib --lib
 python3 tests/quickshare_loopback.py
 ```
 
-The loopback test loads the built Rust library in two separate processes. It verifies matching PINs, no files written before approval, encrypted multi-file delivery (including a 2 MB binary and an empty file), decline, cancellation, connection failures, visibility changes, preservation of existing files and clean shutdown.
+The loopback test loads the built Rust library in two separate processes. It verifies matching PINs, no files written before approval, encrypted multi-file delivery (including a 2 MB binary and an empty file), decline, cancellation, connection failures, visibility changes, preservation of existing files, Unicode clipboard text/URLs, text consent and size limits, and clean shutdown.
 
 For native UI verification on a private Xvfb display:
 
@@ -107,3 +111,9 @@ Screenshots and logs go in `artifacts/`. `GHOSTFILE_PORT` can fix the Quick Shar
 - `vendor/rquickshare/`: pinned protocol engine with local interoperability and file-handling fixes; see `UPSTREAM.md`.
 
 GPL-3.0-only, consistent with the integrated RQuickShare dependency. Oriel is MIT-licensed. GhostShare is an independent, unofficial application. Quick Share is a Google/Samsung trademark.
+
+## Clipboard sharing
+
+Choose **Clipboard text**, then **Paste clipboard** (or type text), review it, and select a nearby device. The tray also has **Send clipboard…**. Text and links use Quick Share text/BYTE payloads, with the same confirmation code and receiver approval as files. Text is limited to 1 MB. Clipboard images and automatic clipboard synchronization are not implemented.
+
+Received text appears in Activity with **Copy text**, also available on its completion notification. Accepting text keeps it in the current session; it does not overwrite your clipboard or create a downloaded file. Copy is an explicit action.

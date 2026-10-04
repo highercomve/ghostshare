@@ -1,5 +1,22 @@
 const $ = id => document.getElementById(id);
-let files = [], model = null, sending = false, polling = false;
+let files = [], model = null, sending = false, polling = false, share_mode = "files";
+function ready_to_send() { return share_mode === "text" ? $("clipboard-text").value.length > 0 : files.length > 0; }
+function set_share_mode(mode) {
+  share_mode = mode;
+  $("file-compose").hidden = mode !== "files"; $("text-compose").hidden = mode !== "text";
+  $("clear").hidden = mode !== "files" || !files.length;
+  $("mode-files").className = mode === "files" ? "secondary" : "text-button";
+  $("mode-text").className = mode === "text" ? "secondary" : "text-button";
+  $("mode-files").setAttribute("aria-pressed", String(mode === "files"));
+  $("mode-text").setAttribute("aria-pressed", String(mode === "text"));
+  render_files(); render_peers();
+}
+async function paste_clipboard() {
+  set_share_mode("text"); $("read-clipboard").disabled = true;
+  try { const result = await call("read_clipboard"); $("clipboard-text").value = result.text; if (!result.text) error("The clipboard has no text to share."); else $("error").hidden = true; }
+  catch (err) { error(err.message || err); }
+  finally { $("read-clipboard").disabled = false; render_files(); render_peers(); }
+}
 const terminal = new Set(["Finished", "Rejected", "Cancelled", "Disconnected"]);
 const states = { Initial:"Connecting", ReceivedConnectionRequest:"Connecting", SentIntroduction:"Waiting for receiver",
   WaitingForUserConsent:"Waiting for approval", ReceivingFiles:"Receiving", SendingFiles:"Sending", Finished:"Complete",
@@ -35,7 +52,7 @@ function button(text, className, action) {
 function render_files() {
   clear($("file-list"));
   $("file-empty").hidden = files.length > 0;
-  $("clear").hidden = files.length === 0;
+  $("clear").hidden = share_mode !== "files" || files.length === 0;
   $("choose").textContent = files.length ? "Add another file ＋" : "Choose files ＋";
   for (const file of files) {
     const row = element("div", "file-row");
@@ -48,7 +65,7 @@ function render_files() {
     row.appendChild(remove);
     $("file-list").appendChild(row);
   }
-  $("manual-send").disabled = !files.length || sending || !$("address").value.trim();
+  $("manual-send").disabled = !ready_to_send() || sending || !$("address").value.trim();
 }
 function render_peers() {
   const peers = model ? model.peers : [];
@@ -63,20 +80,21 @@ function render_peers() {
     detail.appendChild(element("div", "small", (peer.rtype || "Device") + " · " + peer.id));
     row.appendChild(detail);
     const sendButton = button("Send ↗", "", () => send(peer.id, peer.name || "Nearby device"));
-    sendButton.disabled = !files.length || sending;
+    sendButton.disabled = !ready_to_send() || sending;
     row.appendChild(sendButton);
     $("peers").appendChild(row);
   }
 }
 async function send(address, name) {
-  if (!files.length || sending) return;
+  if (!ready_to_send() || sending) return;
   sending = true; $("choose").disabled = true; $("clear").disabled = true;
+  $("clipboard-text").disabled = true; $("mode-files").disabled = true; $("mode-text").disabled = true; $("read-clipboard").disabled = true;
   render_files(); render_peers();
   try {
-    await call("send_files", { address, name, paths:files.map(f => f.path) });
-    files = []; $("error").hidden = true;
+    if (share_mode === "text") { await call("send_text", { address, name, text:$("clipboard-text").value }); $("clipboard-text").value = ""; }
+    else { await call("send_files", { address, name, paths:files.map(f => f.path) }); files = []; } $("error").hidden = true;
   } catch (err) { error(err.message || err); }
-  finally { sending = false; $("choose").disabled = false; $("clear").disabled = false; render_files(); render_peers(); await poll(); }
+  finally { sending = false; $("clipboard-text").disabled = false; $("mode-files").disabled = false; $("mode-text").disabled = false; $("read-clipboard").disabled = false; $("choose").disabled = false; $("clear").disabled = false; render_files(); render_peers(); await poll(); }
 }
 async function decision(id, accept, controls, chooseFolder = false) {
   for (const node of controls) node.disabled = true;
@@ -96,7 +114,7 @@ function render_transfers() {
     const meta = transfer.meta || {};
     const incoming = transfer.rtype === "Inbound";
     const peer = meta.source ? meta.source.name : "Nearby device";
-    const names = (meta.files || []).map(name => name.split(/[\\/]/).pop()).join(", ") || meta.text_description || "Preparing transfer";
+    const names = (meta.files || []).map(name => name.split(/[\\/]/).pop()).join(", ") || meta.text_description || ((!meta.files && (transfer.state === "WaitingForUserConsent" || transfer.state === "Finished")) ? "Clipboard text" : "Preparing transfer");
     if (incoming && transfer.state === "WaitingForUserConsent") {
       const request = element("div", "request");
       request.appendChild(element("h3", "", peer + " wants to share"));
@@ -105,9 +123,10 @@ function render_transfers() {
       request.appendChild(element("div", "pin", meta.pin_code || "—"));
       const actions = element("div", "request-actions");
       const controls = [];
-      request.appendChild(element("div", "small", "Default folder · " + model.download_dir));
-      controls.push(button("Accept to default", "primary", () => decision(transfer.id, true, controls)));
-      controls.push(button("Choose folder…", "secondary", () => decision(transfer.id, true, controls, true)));
+      const is_text = !meta.files;
+      if (!is_text) request.appendChild(element("div", "small", "Default folder · " + model.download_dir));
+      controls.push(button(is_text ? "Accept" : "Accept to default", "primary", () => decision(transfer.id, true, controls)));
+      if (!is_text) controls.push(button("Choose folder…", "secondary", () => decision(transfer.id, true, controls, true)));
       controls.push(button("Decline", "secondary", () => decision(transfer.id, false, controls)));
       for (const control of controls) actions.appendChild(control);
       request.appendChild(actions); $("requests").appendChild(request);
@@ -121,6 +140,13 @@ function render_transfers() {
       const fill = element("div", "progress-fill");
       fill.style.width = Math.min(100, meta.total_bytes ? (meta.ack_bytes || 0) / meta.total_bytes * 100 : 0) + "%";
       progress.appendChild(fill); detail.appendChild(progress);
+    }
+    if (transfer.state === "Finished" && typeof meta.text_payload === "string") {
+      detail.appendChild(element("div", "text-preview", meta.text_payload));
+      const copy = button("Copy text", "secondary", async () => {
+        try { await call("copy_transfer", {id:transfer.id}); copy.textContent = "Copied"; } catch (err) { error(err.message || err); }
+      });
+      detail.appendChild(copy);
     }
     if (transfer.state === "Finished" && (incoming ? meta.saved_files : meta.files)) {
       const actions = element("div", "file-actions");
@@ -170,9 +196,13 @@ async function choose_files() {
   } catch (err) { error(err.message || err); }
   finally { $("choose").disabled = false; }
 }
+$("mode-files").addEventListener("click", () => set_share_mode("files"));
+$("mode-text").addEventListener("click", () => set_share_mode("text"));
+$("read-clipboard").addEventListener("click", paste_clipboard);
+$("clipboard-text").addEventListener("input", () => { render_files(); render_peers(); });
 $("choose").addEventListener("click", choose_files);
 $("clear").addEventListener("click", () => { files = []; render_files(); render_peers(); });
-$("address").addEventListener("input", () => { $("manual-send").disabled = !files.length || sending || !$("address").value.trim(); });
+$("address").addEventListener("input", () => { $("manual-send").disabled = !ready_to_send() || sending || !$("address").value.trim(); });
 $("manual-send").addEventListener("click", () => send($("address").value.trim(), "Nearby device"));
 $("visibility").addEventListener("click", async () => {
   if (!model) return;
@@ -188,7 +218,8 @@ function set_theme(dark) { document.documentElement.setAttribute("data-theme", d
 if (window.oriel) {
   call("system_info").then(info => !theme_event_received && typeof info.dark === "boolean" && set_theme(info.dark)).catch(err => error(err.message || err));
   window.oriel.listen("system_theme", info => { theme_event_received = true; if (typeof info.dark === "boolean") set_theme(info.dark); });
-  window.oriel.listen("tray_send", () => choose_files());
+  window.oriel.listen("tray_send", () => { set_share_mode("files"); choose_files(); });
+  window.oriel.listen("tray_clipboard", paste_clipboard);
   window.oriel.listen("tray_visibility", () => poll());
   window.oriel.listen("review_request", () => poll());
   window.oriel.listen("notification_error", error);

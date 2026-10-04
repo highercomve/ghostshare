@@ -135,7 +135,28 @@ def main():
             known_ids = {t["id"] for t in request(sender, "snapshot")["transfers"]}
             request(sender, "send", address=f"127.0.0.1:{port()}", name="Offline", paths=[files[0]])
             wait(sender, lambda t: t["id"] not in known_ids and t["state"] == "Disconnected" and t["rtype"] == "Outbound")
-            print("PASS: encrypted batches, empty files, matching PINs, consent, decline, cancellation, visibility, duplicate preservation, connection failures")
+            # Real BYTE payloads for clipboard text and URLs, never temporary text files.
+            for text in ("Hello 👻\nClipboard\x10 stays intact", "https://example.com/share?q=ghost", "é" * 300000):
+                request(sender, "send_text", address=f"127.0.0.1:{receiver_port}", name="Receiver", text=text)
+                incoming_text = wait(receiver, lambda t: t["state"] == "WaitingForUserConsent")
+                assert incoming_text["meta"]["files"] is None
+                assert incoming_text["meta"]["total_bytes"] == len(text.encode())
+                sender_text = wait(sender, lambda t: t["state"] == "SentIntroduction" and t["meta"].get("text_payload") == text)
+                assert sender_text["meta"]["pin_code"] == incoming_text["meta"]["pin_code"]
+                assert incoming_text["meta"]["text_payload"] is None, "text exposed before approval"
+                request(receiver, "decide", id=incoming_text["id"], accept=True)
+                received_text = wait(receiver, lambda t: t["id"] == incoming_text["id"] and t["state"] == "Finished")
+                assert received_text["meta"]["text_payload"] == text
+                assert request(receiver, "resolve_text", id=incoming_text["id"]) == text
+                assert received_text["meta"]["text_type"] == ("Url" if text.startswith("https://") else "Text")
+            request(sender, "send_text", address=f"127.0.0.1:{receiver_port}", name="Receiver", text="decline this clipboard")
+            declined_text = wait(receiver, lambda t: t["state"] == "WaitingForUserConsent")
+            request(receiver, "decide", id=declined_text["id"], accept=False)
+            wait(receiver, lambda t: t["id"] == declined_text["id"] and t["state"] == "Rejected")
+            for invalid in ("", "x" * (1024 * 1024 + 1), "bad\0text"):
+                sender.send(dict(command="send_text", address=f"127.0.0.1:{receiver_port}", name="Receiver", text=invalid))
+                assert sender.poll(12) and not sender.recv()["ok"]
+            print("PASS: encrypted batches, empty files, matching PINs, consent, decline, cancellation, visibility, duplicate preservation, connection failures, clipboard text/URLs, Unicode, text consent and limits")
         finally:
             for connection in connections:
                 connection.send(None)

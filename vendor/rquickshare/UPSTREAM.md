@@ -23,3 +23,5 @@ Original schemas and copyright headers are retained. Regression coverage lives i
 Additional GhostFile integration patches: per-transfer save directories, atomic
 collision-safe file creation at acceptance, actual saved path metadata, portable
 seek/write and file-length APIs, and hostname lookup without sys_metrics.
+
+- Implement outbound Quick Share plain-text/URL metadata and encrypted BYTE payloads for clipboard sharing. Preserve UTF-8 text (including control byte 0x10), require consent before completing inbound text, and validate received payload length.

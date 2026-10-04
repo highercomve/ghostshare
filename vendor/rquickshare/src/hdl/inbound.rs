@@ -530,7 +530,7 @@ impl InboundRequest {
                         info!("Processing PayloadType::Bytes");
                         let payload_id = header.id();
 
-                        if header.total_size() > SANE_FRAME_LENGTH.into() {
+                        if header.total_size() < 0 || header.total_size() > SANE_FRAME_LENGTH.into() {
                             self.state.payload_buffers.remove(&payload_id);
                             return Err(anyhow!(
                                 "Payload too large: {} bytes",
@@ -566,9 +566,16 @@ impl InboundRequest {
                                 && self.state.text_payload.as_ref().unwrap().get_i64_value()
                                     == payload_id
                             {
+                                if self.state.state != State::ReceivingFiles {
+                                    return Err(anyhow!("Text received before approval"));
+                                }
+                                if buffer.len() as i64 != header.total_size() {
+                                    return Err(anyhow!("Incomplete text payload"));
+                                }
                                 info!("Transfer finished");
-                                let end_index =
-                                    buffer.iter().position(|&b| b == 16).unwrap_or(buffer.len());
+                                let end_index = if matches!(self.state.text_payload, Some(TextPayloadInfo::Wifi(_))) {
+                                    buffer.iter().position(|&b| b == 16).unwrap_or(buffer.len())
+                                } else { buffer.len() };
                                 let payload = std::str::from_utf8(&buffer[..end_index])?.to_owned();
 
                                 match self.state.text_payload.clone().unwrap() {
@@ -614,6 +621,7 @@ impl InboundRequest {
                                 self.update_state(
                                     |e| {
                                         e.state = State::Finished;
+                                        if let Some(meta) = e.transfer_metadata.as_mut() { meta.ack_bytes = meta.total_bytes; }
                                     },
                                     true,
                                 )
@@ -909,6 +917,7 @@ impl InboundRequest {
                         files: None,
                         pin_code: self.state.pin_code.clone(),
                         text_description: meta.text_title.clone(),
+                        total_bytes: meta.size().max(0) as u64,
                         ..Default::default()
                     };
 
@@ -932,6 +941,7 @@ impl InboundRequest {
                         files: None,
                         pin_code: self.state.pin_code.clone(),
                         text_description: meta.text_title.clone(),
+                        total_bytes: meta.size().max(0) as u64,
                         ..Default::default()
                     };
 

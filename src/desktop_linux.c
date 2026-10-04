@@ -113,21 +113,24 @@ void ghostshare_desktop_cleanup(void) {
     }
     g_clear_object(&application); parent = NULL;
 }
-void ghostshare_desktop_notify(const char *id, const char *kind, const char *name, const char *pin) {
+void ghostshare_desktop_notify(const char *id, const char *kind, const char *name, const char *pin, int text) {
     if (!application) return;
     if (!strcmp(kind, "dismiss")) { g_application_withdraw_notification(G_APPLICATION(application), id); return; }
     int incoming = !strcmp(kind, "request");
-    GNotification *notification = g_notification_new(incoming ? "Incoming files" : "Files received");
-    char *body = incoming ? g_strdup_printf("%s wants to share files. Compare this code before accepting: %s. Accept saves to the default folder.", name, pin) : g_strdup_printf("Files from %s are ready. Open GhostShare to view them.", name);
+    GNotification *notification = g_notification_new(text ? (incoming ? "Incoming text" : "Text received") : (incoming ? "Incoming files" : "Files received"));
+    char *body = text ? (incoming ? g_strdup_printf("%s wants to share text. Compare this code before accepting: %s.", name, pin) : g_strdup_printf("Text from %s is ready to copy.", name)) : incoming ? g_strdup_printf("%s wants to share files. Compare this code before accepting: %s. Accept saves to the default folder.", name, pin) : g_strdup_printf("Files from %s are ready. Open GhostShare to view them.", name);
     g_notification_set_body(notification, body); g_free(body);
     g_notification_set_priority(notification, incoming ? G_NOTIFICATION_PRIORITY_HIGH : G_NOTIFICATION_PRIORITY_NORMAL);
     GIcon *icon = g_themed_icon_new("dev.ghostshare.App");
     g_notification_set_icon(notification, icon); g_object_unref(icon);
     g_notification_set_default_action_and_target(notification, "app.review-transfer", "s", id);
     if (incoming) {
-        g_notification_add_button_with_target(notification, "Review request", "app.review-transfer", "s", id);
-        if (pin[0]) g_notification_add_button_with_target(notification, "Accept to default", "app.transfer-action", "(ss)", id, "accept");
-        g_notification_add_button_with_target(notification, "Decline", "app.transfer-action", "(ss)", id, "decline");
+        if (pin[0]) g_notification_add_button_with_target(notification, "Accept", "app.transfer-action", "(ss)", id, "accept");
+        g_notification_add_button_with_target(notification, "Review", "app.review-transfer", "s", id);
+        g_notification_add_button_with_target(notification, "Deny", "app.transfer-action", "(ss)", id, "decline");
+    } else if (text) {
+        g_notification_add_button_with_target(notification, "Copy text", "app.transfer-action", "(ss)", id, "copy_text");
+        g_notification_add_button_with_target(notification, "Review", "app.review-transfer", "s", id);
     } else {
         g_notification_add_button_with_target(notification, "Open file", "app.transfer-action", "(ss)", id, "open_file");
         g_notification_add_button_with_target(notification, "Open folder", "app.transfer-action", "(ss)", id, "open_folder");

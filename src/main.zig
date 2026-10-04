@@ -15,7 +15,7 @@ extern fn ghostshare_desktop_init(application: ?*anyopaque, window: ?*anyopaque)
 extern fn ghostshare_desktop_cleanup() void;
 extern fn ghostshare_desktop_dark() c_int;
 extern fn ghostshare_desktop_quit() void;
-extern fn ghostshare_desktop_notify(id: [*:0]const u8, kind: [*:0]const u8, name: [*:0]const u8, pin: [*:0]const u8) void;
+extern fn ghostshare_desktop_notify(id: [*:0]const u8, kind: [*:0]const u8, name: [*:0]const u8, pin: [*:0]const u8, text: c_int) void;
 extern fn ghostshare_select_folder() ?[*:0]u8;
 extern fn ghostshare_desktop_free(pointer: [*:0]u8) void;
 extern fn ghostshare_open_path(path: [*:0]const u8) c_int;
@@ -23,6 +23,7 @@ var tray: ?*oriel.tray.Tray = null;
 var startup_error: ?[]const u8 = null;
 var device_visible: std.atomic.Value(bool) = .init(true);
 
+const ClipboardText = struct { text: []const u8 };
 const FileSelection = struct { path: []const u8, name: []const u8, size: u64 };
 fn request_json(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
     const json = try std.json.Stringify.valueAlloc(allocator, value, .{});
@@ -36,6 +37,7 @@ fn request_json(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
 pub const Events = struct {
     system_theme: struct { dark: bool },
     tray_send: bool,
+    tray_clipboard: bool,
     tray_visibility: bool,
     tray_update: bool,
     notification_error: []const u8,
@@ -58,6 +60,7 @@ fn tray_menu(id: []const u8, checked: ?bool) void {
     }
     show_window();
     if (std.mem.eql(u8, id, "updates")) oriel.App.events(Events).emit(.tray_update, true);
+    if (std.mem.eql(u8, id, "clipboard")) oriel.App.events(Events).emit(.tray_clipboard, true);
     if (std.mem.eql(u8, id, "send")) oriel.App.events(Events).emit(.tray_send, true);
 }
 fn sync_tray_visibility(_: void) void {
@@ -88,10 +91,11 @@ fn setup() !void {
         .id = "dev.ghostshare.App",
         .title = "GhostShare",
         .tooltip = "Share files nearby",
-        .icon = .{ .png = app.icon_bytes },
+        .icon = .{ .png = @import("tray_icon").bytes },
         .menu = &.{
             .{ .item = .{ .id = "show", .label = "Show GhostShare" } },
             .{ .item = .{ .id = "send", .label = "Send files…" } },
+            .{ .item = .{ .id = "clipboard", .label = "Send clipboard…" } },
             .{ .check = .{ .id = "visible", .label = "Visible to nearby devices", .checked = true } },
             .separator,
             .{ .item = .{ .id = "updates", .label = "Check for updates" } },
@@ -122,41 +126,41 @@ fn notify_main(event: NotificationEvent) void {
     var arena: std.heap.ArenaAllocator = .init(std.heap.smp_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const parsed = std.json.parseFromSlice(struct { id: []const u8, kind: []const u8, name: []const u8, pin: ?[]const u8 = null }, allocator, event.bytes[0..event.len], .{}) catch return;
+    const parsed = std.json.parseFromSlice(struct { id: []const u8, kind: []const u8, name: []const u8, pin: ?[]const u8 = null, text: bool = false }, allocator, event.bytes[0..event.len], .{}) catch return;
     const dismiss = std.mem.eql(u8, parsed.value.kind, "dismiss");
     if (desktop_linux and (dismiss or !@hasDecl(oriel.notification, "onAction"))) {
         const id = allocator.dupeZ(u8, parsed.value.id) catch return;
         const kind = allocator.dupeZ(u8, parsed.value.kind) catch return;
         const name = allocator.dupeZ(u8, parsed.value.name) catch return;
         const pin = allocator.dupeZ(u8, parsed.value.pin orelse "") catch return;
-        ghostshare_desktop_notify(id, kind, name, pin);
+        ghostshare_desktop_notify(id, kind, name, pin, @intFromBool(parsed.value.text));
         return;
     }
     if (dismiss) return;
     const incoming = std.mem.eql(u8, parsed.value.kind, "request");
-    const body = std.fmt.allocPrint(allocator, "{s}{s}{s}{s}", .{ parsed.value.name, if (incoming) " wants to share files. Compare this code before accepting: " else " · Files are ready. Open GhostShare to view them.", (if (incoming) parsed.value.pin orelse "" else ""), if (incoming) " · Accept saves to the default folder." else "" }) catch return;
+    const body = std.fmt.allocPrint(allocator, "{s}{s}{s}{s}", .{ parsed.value.name, if (incoming) (if (parsed.value.text) " wants to share text. Compare this code before accepting: " else " wants to share files. Compare this code before accepting: ") else (if (parsed.value.text) " · Text is ready to copy in GhostShare." else " · Files are ready. Open GhostShare to view them."), (if (incoming) parsed.value.pin orelse "" else ""), if (incoming and !parsed.value.text) " · Accept saves to the default folder." else "" }) catch return;
     if (@hasDecl(oriel.notification, "onAction")) {
         oriel.notification.notify(.{
             .id = parsed.value.id,
-            .title = if (incoming) "Incoming files" else "Files received",
+            .title = if (parsed.value.text) (if (incoming) "Incoming text" else "Text received") else (if (incoming) "Incoming files" else "Files received"),
             .body = body,
             .actions = if (incoming) (if (parsed.value.pin != null) &.{
-                .{ .id = "review", .label = "Review request" },
-                .{ .id = "accept", .label = "Accept to default" },
-                .{ .id = "decline", .label = "Decline" },
-            } else &.{ .{ .id = "review", .label = "Review request" }, .{ .id = "decline", .label = "Decline" } }) else &.{
+                .{ .id = "accept", .label = "Accept" },
+                .{ .id = "review", .label = "Review" },
+                .{ .id = "decline", .label = "Deny" },
+            } else &.{ .{ .id = "review", .label = "Review" }, .{ .id = "decline", .label = "Deny" } }) else if (parsed.value.text) &.{ .{ .id = "copy_text", .label = "Copy text" }, .{ .id = "review", .label = "Review" } } else &.{
                 .{ .id = "open_file", .label = "Open file" },
                 .{ .id = "open_folder", .label = "Open folder" },
             },
         }) catch {};
     } else {
-        oriel.notification.notify(.{ .id = parsed.value.id, .title = if (incoming) "Incoming files" else "Files received", .body = body }) catch {};
+        oriel.notification.notify(.{ .id = parsed.value.id, .title = if (parsed.value.text) (if (incoming) "Incoming text" else "Text received") else (if (incoming) "Incoming files" else "Files received"), .body = body }) catch {};
     }
 }
 const NotificationTask = struct {
     id: [256]u8,
     len: usize,
-    action: enum { accept, decline, open_file, open_folder },
+    action: enum { accept, decline, open_file, open_folder, copy_text },
 };
 export fn ghostshare_notification_action(id: [*:0]const u8, action: [*:0]const u8) void {
     notification_action(std.mem.span(id), std.mem.span(action));
@@ -188,6 +192,7 @@ fn notification_task(task: NotificationTask) void {
 fn perform_notification_task(allocator: std.mem.Allocator, task: NotificationTask) !void {
     const id = task.id[0..task.len];
     switch (task.action) {
+        .copy_text => try Commands.copy_transfer(allocator, .{ .id = id }),
         .open_file, .open_folder => try Commands.open_transfer(allocator, .{ .id = id, .folder = task.action == .open_folder }),
         .accept, .decline => {
             const response = try Commands.decide(allocator, .{ .id = id, .accept = task.action == .accept });
@@ -214,7 +219,7 @@ export fn ghostshare_quit_requested() void {
 }
 
 pub const Commands = struct {
-    pub const async_commands = .{ "snapshot", "select_file", "send_files", "decide", "cancel", "visibility", "select_folder", "open_transfer", "updater_check", "updater_install", "updater_restart" };
+    pub const async_commands = .{ "snapshot", "select_file", "send_files", "read_clipboard", "send_text", "copy_transfer", "decide", "cancel", "visibility", "select_folder", "open_transfer", "updater_check", "updater_install", "updater_restart" };
     pub const update_info = updates.info;
     pub const updater_check = updates.check;
     pub const updater_install = updates.install;
@@ -250,6 +255,22 @@ pub const Commands = struct {
     }
     pub fn send_files(allocator: std.mem.Allocator, args: struct { address: []const u8, name: []const u8, paths: []const []const u8 }) ![]const u8 {
         return request_json(allocator, .{ .command = "send", .address = args.address, .name = args.name, .paths = args.paths });
+    }
+    pub fn read_clipboard(allocator: std.mem.Allocator) !ClipboardText {
+        const text = try oriel.clipboard.readText(allocator);
+        if (text.len > 1024 * 1024) return oriel.ipc.fail("Clipboard text exceeds 1 MB", .{});
+        return .{ .text = text };
+    }
+    pub fn send_text(allocator: std.mem.Allocator, args: struct { address: []const u8, name: []const u8, text: []const u8 }) ![]const u8 {
+        return request_json(allocator, .{ .command = "send_text", .address = args.address, .name = args.name, .text = args.text });
+    }
+    pub fn copy_transfer(allocator: std.mem.Allocator, args: struct { id: []const u8 }) !void {
+        const response = try request_json(allocator, .{ .command = "resolve_text", .id = args.id });
+        defer allocator.free(response);
+        const parsed = try std.json.parseFromSlice(struct { ok: bool, data: ?[]const u8 = null, @"error": ?[]const u8 = null }, allocator, response, .{});
+        defer parsed.deinit();
+        if (!parsed.value.ok) return oriel.ipc.fail("{s}", .{parsed.value.@"error" orelse "Text unavailable"});
+        try oriel.clipboard.writeText(parsed.value.data orelse return error.MissingText);
     }
     pub fn decide(allocator: std.mem.Allocator, args: struct { id: []const u8, accept: bool, directory: ?[]const u8 = null }) ![]const u8 {
         return request_json(allocator, .{ .command = "decide", .id = args.id, .accept = args.accept, .directory = args.directory });

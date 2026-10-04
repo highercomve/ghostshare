@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
         .media_server = false,
         .global_shortcut = false,
         .input = false,
-        .clipboard = false,
+        .clipboard = true,
     });
 
     // Frontend in frontend/ (embeds frontend/ as-is).
@@ -38,9 +38,12 @@ pub fn build(b: *std.Build) void {
     config.addOption([]const u8, "version", version);
     const application = oriel.addApp(b, dep, .{
         .name = "ghostshare",
-        .imports = &.{.{ .name = "ghostshare_config", .module = config.createModule() }},
+        .imports = &.{
+            .{ .name = "ghostshare_config", .module = config.createModule() },
+            .{ .name = "tray_icon", .module = b.createModule(.{ .root_source_file = b.path("assets/brand/tray-icon.zig") }) },
+        },
         .root_source_file = b.path("src/main.zig"),
-        .icon = b.path("icon.png"), // High-resolution PNG (1024x1024 recommended)
+        .icon = b.path("assets/brand/ghostshare-icon.png"), // High-resolution PNG (1024x1024 recommended)
         .frontend = .{
             // A static page: embedded as-is, no npm and no dev server.
             .dir = "frontend",

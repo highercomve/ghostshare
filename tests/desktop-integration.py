@@ -99,7 +99,8 @@ def main():
         receiver_port = port()
         app = subprocess.Popen(["./zig-out/bin/ghostshare"], env=dict(os.environ, GHOSTFILE_PORT=str(receiver_port), GHOSTFILE_DOWNLOAD_DIR=str(folder / "received"), XDG_DATA_HOME=str(data), XDG_CONFIG_HOME=str(config)), stdout=open("artifacts/desktop.log", "w"), stderr=subprocess.STDOUT)
         sender, child = mp.Pipe()
-        engine = mp.Process(target=worker, args=(child, folder / "sender", port()))
+        sender_port = port()
+        engine = mp.Process(target=worker, args=(child, folder / "sender", sender_port))
         engine.start(); child.close()
         try:
             pump(visible)
@@ -122,19 +123,19 @@ def main():
             close_window(window)
             pump(lambda: not visible())
             def tray_visible():
-                return "<1>" in dbus(tray, "/MenuBar", "com.canonical.dbusmenu.GetProperty", "3", "toggle-state")
+                return "<1>" in dbus(tray, "/MenuBar", "com.canonical.dbusmenu.GetProperty", "4", "toggle-state")
             assert tray_visible()
-            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "3", "clicked", "<0>", "0")
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "4", "clicked", "<0>", "0")
             pump(lambda: not tray_visible())
             assert not visible(), "Changing discovery visibility must keep the window hidden"
-            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "3", "clicked", "<0>", "0")
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "4", "clicked", "<0>", "0")
             pump(tray_visible)
             path = folder / "received-test.txt"; path.write_text("Encrypted desktop integration test\n")
             request(sender, "send", address=f"127.0.0.1:{receiver_port}", name="Desktop", paths=[str(path)])
             pump(lambda: notifications)
             assert app.poll() is None and not visible(), "Receiving must continue while hidden"
             assert not list((folder / "received").iterdir()), "Notification must not auto-accept"
-            assert {"Review request", "Accept to default", "Decline"}.issubset(set(notifications[-1][5]))
+            assert {"Accept", "Review", "Deny"}.issubset(set(notifications[-1][5]))
             pin = request(sender, "snapshot")["transfers"][-1]["meta"]["pin_code"]
             assert pin and pin in notifications[-1][4], "Notification must show the confirmation code"
             bus.emit_signal(None, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "ActionInvoked", GLib.Variant("(us)", (1, "default")))
@@ -162,7 +163,7 @@ def main():
             request(sender, "send", address=f"127.0.0.1:{receiver_port}", name="Desktop", paths=[str(accepted)])
             pump(lambda: len(notifications) > before)
             assert not (folder / "received" / accepted.name).exists()
-            click_notification("Accept to default")
+            click_notification("Accept")
             pump(lambda: (folder / "received" / accepted.name).exists())
             pump(lambda: notifications[-1][3] == "Files received")
             assert not visible(), "Notification acceptance should preserve background mode"
@@ -175,7 +176,7 @@ def main():
             before = len(notifications)
             request(sender, "send", address=f"127.0.0.1:{receiver_port}", name="Desktop", paths=[str(folder_file)])
             pump(lambda: len(notifications) > before)
-            click_notification("Accept to default")
+            click_notification("Accept")
             pump(lambda: notifications[-1][3] == "Files received")
             click_notification("Open folder")
             pump(lambda: len(opened.read_text().splitlines()) >= 2)
@@ -184,16 +185,45 @@ def main():
             before = len(notifications)
             request(sender, "send", address=f"127.0.0.1:{receiver_port}", name="Desktop", paths=[str(declined)])
             pump(lambda: len(notifications) > before)
-            click_notification("Decline")
+            click_notification("Deny")
             pump(lambda: request(sender, "snapshot")["transfers"][-1]["state"] in {"Rejected", "Disconnected"})
             assert not (folder / "received" / declined.name).exists() and not visible()
+            clipboard_text = "GhostShare clipboard 👻\nA second line"
+            before = len(notifications)
+            request(sender, "send_text", address=f"127.0.0.1:{receiver_port}", name="Desktop", text=clipboard_text)
+            pump(lambda: len(notifications) > before and notifications[-1][3] == "Incoming text")
+            assert [label for label in notifications[-1][5][1::2] if label in {"Accept", "Review", "Deny"}] == ["Accept", "Review", "Deny"], notifications[-1][5]
+            click_notification("Accept")
+            pump(lambda: notifications[-1][3] == "Text received")
+            assert not visible()
+            click_notification("Copy text")
+            def copied_text():
+                result = subprocess.run(["xsel", "--clipboard", "--output"], capture_output=True, text=True, timeout=3)
+                return result.stdout == clipboard_text
+            pump(copied_text)
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "3", "clicked", "<0>", "0")
+            pump(visible)
+            time.sleep(1)
+            command("import", "-window", "root", "artifacts/clipboard-ui.png")
+            command("xdotool", "mousemove", "--window", window, "650", "550", "click", "1", "key", "ctrl+a")
+            command("xdotool", "type", "--clearmodifiers", f"127.0.0.1:{sender_port}")
+            command("xdotool", "mousemove", "--window", window, "895", "550", "click", "1")
+            def clipboard_sent():
+                return next((t for t in request(sender, "snapshot")["transfers"] if t["rtype"] == "Inbound" and t["state"] == "WaitingForUserConsent"), None)
+            pump(clipboard_sent)
+            clipboard_request = clipboard_sent()
+            request(sender, "decide", id=clipboard_request["id"], accept=True)
+            def clipboard_delivered():
+                return next((t for t in request(sender, "snapshot")["transfers"] if t["id"] == clipboard_request["id"] and t["state"] == "Finished"), None)
+            pump(clipboard_delivered)
+            assert clipboard_delivered()["meta"]["text_payload"] == clipboard_text
             dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "2", "clicked", "<0>", "0")
             pump(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Choose a file to share"], capture_output=True).returncode == 0)
             # Quitting from the tray must cancel an open picker and stop cleanly.
-            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "7", "clicked", "<0>", "0")
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "8", "clicked", "<0>", "0")
             pump(lambda: app.poll() is not None)
             assert app.returncode == 0
-            print("PASS: background receiving, clickable notifications, folder picker cancellation, default consent, notification accept/decline/open file/open folder, tray visibility, tray send, live theme, quit with picker open")
+            print("PASS: background receiving, clickable notifications, folder picker cancellation, default consent, notification accept/decline/open file/open folder, tray visibility, tray send, clipboard notification copy, tray preview and native UI sending, live theme, quit with picker open")
         finally:
             if app.poll() is None:
                 app.kill(); app.wait(8)

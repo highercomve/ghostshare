@@ -79,3 +79,8 @@ footer { padding:15px 38px; border-top:1px solid var(--line); color:var(--muted)
 
 .update-bar { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 38px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
 .update-bar button { font-size:11px; }
+
+.share-modes { display:flex; gap:8px; margin:0 0 18px; }
+#text-compose label { display:block; margin-bottom:8px; font-weight:600; }
+#clipboard-text { width:100%; min-height:130px; padding:12px; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; font:inherit; resize:vertical; }
+.text-preview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; margin:8px 0; }

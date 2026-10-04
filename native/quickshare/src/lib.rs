@@ -32,7 +32,7 @@ fn notify_transfer(event: &ChannelMessage) {
     };
     let name = event.meta.as_ref().and_then(|m| m.source.as_ref()).map(|s| s.name.as_str()).unwrap_or("Nearby device");
     let pin = event.meta.as_ref().and_then(|m| m.pin_code.as_deref());
-    let value = CString::new(json!({"id":event.id,"kind":kind,"name":name,"pin":pin}).to_string()).unwrap();
+    let value = CString::new(json!({"id":event.id,"kind":kind,"name":name,"pin":pin,"text":event.meta.as_ref().is_some_and(|m| m.files.is_none())}).to_string()).unwrap();
     if let Ok(callback) = EVENT_CALLBACK.lock() {
         if let Some(callback) = *callback { unsafe { callback(value.as_ptr()); } }
     }
@@ -58,6 +58,8 @@ enum Request {
         name: String,
         paths: Vec<String>,
     },
+    SendText { address: String, name: String, text: String },
+    ResolveText { id: String },
     Decide {
         id: String,
         accept: bool,
@@ -194,6 +196,22 @@ async fn handle(
                     ob: OutboundPayload::Files(paths),
                 })
                 .map_err(|e| e.to_string())?;
+        }
+        Request::SendText { address, name, text } => {
+            if text.is_empty() || text.len() > 1024 * 1024 || text.contains('\0') {
+                return Err("Clipboard text must be between 1 byte and 1 MB, without NUL characters".into());
+            }
+            let address: std::net::SocketAddr = address.parse().map_err(|_| "Use an IP address and port")?;
+            if address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
+                return Err("Invalid destination".into());
+            }
+            let id = format!("{}-{}", address, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+            sender.try_send(SendInfo { id, name, addr: address.to_string(), ob: OutboundPayload::Text(text) }).map_err(|e| e.to_string())?;
+        }
+        Request::ResolveText { id } => {
+            let transfer = model.transfers.iter().find(|t| t.id == id).ok_or("Transfer not found")?;
+            if transfer.state != Some(State::Finished) { return Err("Transfer has not completed".into()); }
+            return Ok(json!(transfer.meta.as_ref().and_then(|m| m.text_payload.as_ref()).ok_or("Text unavailable")?));
         }
         Request::Decide { id, accept, directory } => {
             let transfer = model

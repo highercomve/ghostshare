@@ -41,7 +41,7 @@ use crate::securemessage::{
     SecureMessage, SigScheme,
 };
 use crate::sharing_nearby::{
-    file_metadata, paired_key_result_frame, FileMetadata, IntroductionFrame,
+    file_metadata, text_metadata, paired_key_result_frame, FileMetadata, TextMetadata, IntroductionFrame,
 };
 use crate::utils::{
     encode_point, gen_ecdsa_keypair, gen_random, hkdf_extract_expand, stream_read_exact,
@@ -58,6 +58,7 @@ const SANITY_DURATION: Duration = Duration::from_micros(10);
 #[ts(export)]
 pub enum OutboundPayload {
     Files(Vec<String>),
+    Text(String),
 }
 
 #[derive(Debug)]
@@ -82,7 +83,15 @@ impl OutboundRequest {
         rdi: RemoteDeviceInfo,
     ) -> Self {
         let receiver = sender.subscribe();
-        let OutboundPayload::Files(files) = &payload;
+        let metadata = match &payload {
+            OutboundPayload::Files(files) => TransferMetadata { files: Some(files.clone()), ..Default::default() },
+            OutboundPayload::Text(text) => TransferMetadata {
+                text_description: Some("Clipboard text".into()),
+                text_payload: Some(text.clone()),
+                text_type: Some(super::TextPayloadType::Text),
+                ..Default::default()
+            },
+        };
 
         Self {
             endpoint_id,
@@ -98,8 +107,7 @@ impl OutboundRequest {
                 transfer_metadata: Some(TransferMetadata {
                     id: String::from(""),
                     source: Some(rdi),
-                    files: Some(files.to_owned()),
-                    ..Default::default()
+                    ..metadata
                 }),
                 ..Default::default()
             },
@@ -638,7 +646,8 @@ impl OutboundRequest {
         let mut file_metadata: Vec<FileMetadata> = vec![];
         let mut transferred_files: HashMap<i64, InternalFileInfo> = HashMap::new();
         let mut total_to_send = 0;
-        // TODO - Handle sending Text
+        let mut text_metadata = vec![];
+        let mut text_payload = None;
         match &self.payload {
             OutboundPayload::Files(files) => {
                 for f in files {
@@ -705,7 +714,24 @@ impl OutboundRequest {
                     total_to_send += fmetadata.len();
                 }
             }
+            OutboundPayload::Text(text) => {
+                if text.is_empty() || text.len() > 1024 * 1024 {
+                    return Err(anyhow!("Clipboard text must be between 1 byte and 1 MB"));
+                }
+                let id = rand::rng().random::<i64>();
+                let is_url = text.starts_with("https://") || text.starts_with("http://");
+                text_metadata.push(TextMetadata {
+                    payload_id: Some(id),
+                    id: Some(rand::rng().random::<i64>()),
+                    text_title: Some("Clipboard text".into()),
+                    size: Some(text.len() as i64),
+                    r#type: Some(if is_url { text_metadata::Type::Url } else { text_metadata::Type::Text }.into()),
+                });
+                text_payload = Some(super::TextPayloadInfo::Text(id));
+                total_to_send = text.len() as u64;
+            }
         }
+
 
         self.update_state(
             |e| {
@@ -713,6 +739,7 @@ impl OutboundRequest {
                     tmd.total_bytes = total_to_send;
                 }
                 e.transferred_files = transferred_files;
+                e.text_payload = text_payload;
             },
             false,
         )
@@ -724,6 +751,7 @@ impl OutboundRequest {
                 r#type: Some(sharing_nearby::v1_frame::FrameType::Introduction.into()),
                 introduction: Some(IntroductionFrame {
                     file_metadata,
+                    text_metadata,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -756,7 +784,17 @@ impl OutboundRequest {
                 )
                 .await;
 
-                // TODO - Handle sending Text
+                if let OutboundPayload::Text(text) = &self.payload {
+                    let bytes = text.as_bytes().to_vec();
+                    let id = self.state.text_payload.as_ref().ok_or_else(|| anyhow!("Missing text payload"))?.get_i64_value();
+                    self.send_bytes_payload(id, bytes).await?;
+                    self.update_state(|s| {
+                        if let Some(meta) = s.transfer_metadata.as_mut() { meta.ack_bytes = meta.total_bytes; }
+                        s.state = State::Finished;
+                    }, true).await;
+                    self.disconnection().await?;
+                    return Err(anyhow!(crate::errors::AppError::NotAnError));
+                }
                 let ids: Vec<i64> = self.state.transferred_files.keys().cloned().collect();
                 info!("We are sending: {:?}", ids);
                 let mut ids_iter = ids.into_iter();
@@ -1068,10 +1106,14 @@ impl OutboundRequest {
         frame: &sharing_nearby::Frame,
     ) -> Result<(), anyhow::Error> {
         let frame_data = frame.encode_to_vec();
-        let body_size = frame_data.len();
+        let id = rand::rng().random::<i64>();
+        self.send_bytes_payload(id, frame_data).await
+    }
 
+    async fn send_bytes_payload(&mut self, id: i64, frame_data: Vec<u8>) -> Result<(), anyhow::Error> {
+        let body_size = frame_data.len();
         let payload_header = PayloadHeader {
-            id: Some(rand::rng().random_range(i64::MIN..i64::MAX)),
+            id: Some(id),
             r#type: Some(payload_header::PayloadType::Bytes.into()),
             total_size: Some(body_size as i64),
             is_sensitive: Some(false),
