@@ -48,9 +48,19 @@ with tempfile.TemporaryDirectory(prefix="ghostshare-sign-", dir=os.environ["RUNN
     # Trust on LocalMachine (avoids modal confirmation dialog on Windows headless runner)
     ps = "$c=[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($env:GHOSTFILE_CERT,$env:ORIEL_WINDOWS_CERT_PASSWORD); $s=[System.Security.Cryptography.X509Certificates.X509Store]::new('Root','LocalMachine'); $s.Open('ReadWrite'); $s.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($c.RawData)); $s.Close()"
     subprocess.run(["pwsh", "-NoProfile", "-Command", ps], env=dict(os.environ, GHOSTFILE_CERT=str(certificate)), check=True)
+    timestamp_urls = [
+        "http://timestamp.digicert.com",
+        "http://timestamp.sectigo.com",
+    ]
     def sign(path):
-        result = subprocess.run([signtool, "sign", "/f", str(certificate), "/p", os.environ["ORIEL_WINDOWS_CERT_PASSWORD"], "/fd", "SHA256", "/tr", "https://timestamp.digicert.com", "/td", "SHA256", str(path)])
-        if result.returncode: raise SystemExit("Code signing failed (exit " + str(result.returncode) + ")")
+        last_error = None
+        for ts in timestamp_urls:
+            result = subprocess.run([signtool, "sign", "/f", str(certificate), "/p", os.environ["ORIEL_WINDOWS_CERT_PASSWORD"], "/fd", "SHA256", "/tr", ts, "/td", "SHA256", str(path)])
+            if result.returncode == 0:
+                break
+            last_error = result.returncode
+        else:
+            raise SystemExit(f"Code signing failed (exit {last_error})")
         subprocess.run([signtool, "verify", "/pa", str(path)], check=True)
     binary = Path(payload.group(1).replace("$$", "$"))
     sign(binary)
