@@ -740,7 +740,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ghostfile-quickshare"
+name = "ghostshare-quickshare"
 version = "0.1.0"
 dependencies = [
  "directories",

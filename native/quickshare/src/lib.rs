@@ -19,7 +19,7 @@ use tokio::sync::{broadcast, mpsc};
 type EventCallback = unsafe extern "C" fn(*const c_char);
 static EVENT_CALLBACK: Mutex<Option<EventCallback>> = Mutex::new(None);
 #[no_mangle]
-pub extern "C" fn ghostfile_set_event_callback(callback: Option<EventCallback>) {
+pub extern "C" fn ghostshare_set_event_callback(callback: Option<EventCallback>) {
     if let Ok(mut current) = EVENT_CALLBACK.lock() { *current = callback; }
 }
 fn notify_transfer(event: &ChannelMessage) {
@@ -27,11 +27,12 @@ fn notify_transfer(event: &ChannelMessage) {
     let kind = match event.state {
         Some(State::WaitingForUserConsent) => "request",
         Some(State::Finished) => "finished",
-        Some(State::Rejected | State::Cancelled | State::Disconnected) => "dismiss",
+        Some(State::ReceivingFiles | State::Rejected | State::Cancelled | State::Disconnected) => "dismiss",
         _ => return,
     };
     let name = event.meta.as_ref().and_then(|m| m.source.as_ref()).map(|s| s.name.as_str()).unwrap_or("Nearby device");
-    let value = CString::new(json!({"id":event.id,"kind":kind,"name":name}).to_string()).unwrap();
+    let pin = event.meta.as_ref().and_then(|m| m.pin_code.as_deref());
+    let value = CString::new(json!({"id":event.id,"kind":kind,"name":name,"pin":pin}).to_string()).unwrap();
     if let Ok(callback) = EVENT_CALLBACK.lock() {
         if let Some(callback) = *callback { unsafe { callback(value.as_ptr()); } }
     }
@@ -87,7 +88,6 @@ impl Model {
             return;
         }
         let old_state = self.transfers.iter().find(|t| t.id == event.id).and_then(|t| t.state.clone());
-        if old_state != event.state { notify_transfer(&event); }
         if let Some(index) = self.transfers.iter().position(|t| t.id == event.id) {
             if event.meta.is_none() {
                 event.meta = self.transfers[index].meta.clone();
@@ -95,6 +95,7 @@ impl Model {
             if event.rtype.is_none() {
                 event.rtype = self.transfers[index].rtype.clone();
             }
+            if old_state != event.state { notify_transfer(&event); }
             self.transfers[index] = event;
         } else {
             if self.transfers.len() >= 64 {
@@ -109,6 +110,7 @@ impl Model {
                     return;
                 }
             }
+            if old_state != event.state { notify_transfer(&event); }
             self.transfers.push(event);
         }
     }
@@ -324,7 +326,7 @@ fn guarded(f: impl FnOnce() -> Result<Value, String>) -> *mut c_char {
 }
 /// Input must be a valid NUL-terminated UTF-8 string owned by the caller.
 #[no_mangle]
-pub unsafe extern "C" fn ghostfile_start(directory: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn ghostshare_start(directory: *const c_char) -> *mut c_char {
     guarded(|| {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -345,7 +347,7 @@ pub unsafe extern "C" fn ghostfile_start(directory: *const c_char) -> *mut c_cha
             let dirs = directories::UserDirs::new().ok_or("Could not locate home directory")?;
             dirs.download_dir()
                 .unwrap_or(dirs.home_dir())
-                .join("GhostFile")
+                .join("GhostShare")
         } else {
             PathBuf::from(text)
         };
@@ -366,7 +368,7 @@ pub unsafe extern "C" fn ghostfile_start(directory: *const c_char) -> *mut c_cha
         let (tx, rx) = mpsc::channel(32);
         let (ready_tx, ready_rx) = sync_channel::channel();
         let thread = thread::Builder::new()
-            .name("ghostfile-quickshare".into())
+            .name("ghostshare-quickshare".into())
             .spawn(move || {
                 runtime.block_on(run(rx, ready_tx, directory));
                 runtime.shutdown_timeout(Duration::from_secs(1));
@@ -391,7 +393,7 @@ pub unsafe extern "C" fn ghostfile_start(directory: *const c_char) -> *mut c_cha
     })
 }
 #[no_mangle]
-pub unsafe extern "C" fn ghostfile_request(request: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn ghostshare_request(request: *const c_char) -> *mut c_char {
     guarded(|| {
         if request.is_null() {
             return Err("Missing request".into());
@@ -399,7 +401,7 @@ pub unsafe extern "C" fn ghostfile_request(request: *const c_char) -> *mut c_cha
         let request: Request = serde_json::from_slice(CStr::from_ptr(request).to_bytes())
             .map_err(|e| e.to_string())?;
         if matches!(request, Request::Stop) {
-            return Err("Use ghostfile_stop".into());
+            return Err("Use ghostshare_stop".into());
         }
         let engine = ENGINE
             .get_or_init(|| Mutex::new(None))
@@ -416,7 +418,7 @@ pub unsafe extern "C" fn ghostfile_request(request: *const c_char) -> *mut c_cha
     })
 }
 #[no_mangle]
-pub extern "C" fn ghostfile_stop() {
+pub extern "C" fn ghostshare_stop() {
     let Some(lock) = ENGINE.get() else {
         return;
     };
@@ -435,7 +437,7 @@ pub extern "C" fn ghostfile_stop() {
 }
 /// Free exactly once a non-null pointer returned by start/request.
 #[no_mangle]
-pub unsafe extern "C" fn ghostfile_free(pointer: *mut c_char) {
+pub unsafe extern "C" fn ghostshare_free(pointer: *mut c_char) {
     if !pointer.is_null() {
         drop(CString::from_raw(pointer));
     }
@@ -446,7 +448,7 @@ mod tests {
     #[test]
     fn rejects_non_files_and_empty_batches() {
         assert!(validate_paths(&[]).is_err());
-        assert!(validate_paths(&["/a/nonexistent/ghostfile".into()]).is_err());
+        assert!(validate_paths(&["/a/nonexistent/ghostshare".into()]).is_err());
         assert!(validate_paths(&[std::env::temp_dir().to_string_lossy().into_owned()]).is_err());
     }
     #[test]

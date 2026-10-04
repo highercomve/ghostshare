@@ -17,7 +17,7 @@ payload = re.search(r'^!define BINARY_SRC\s+"([^"]+)"', text, re.M)
 installer = re.search(r'^!define OUT_FILE\s+"([^"]+)"', text, re.M)
 if not payload or not installer:
     raise SystemExit("Could not resolve app and installer from Oriel's NSIS script")
-with tempfile.TemporaryDirectory(prefix="ghostfile-sign-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+with tempfile.TemporaryDirectory(prefix="ghostshare-sign-", dir=os.environ["RUNNER_TEMP"]) as temporary:
     certificate = Path(temporary) / "codesign.pfx"
     certificate.write_bytes(base64.b64decode(os.environ["ORIEL_WINDOWS_CERT_P12_BASE64"], validate=True))
     # Trust only on this disposable runner for self-signed chain verification.
@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix="ghostfile-sign-", dir=os.environ["RUNNE
         subprocess.run([signtool, "verify", "/pa", str(path)], check=True)
     binary = Path(payload.group(1).replace("$$", "$"))
     sign(binary)
-    shutil.copy2(binary, "zig-out/bin/ghostfile.exe")
+    shutil.copy2(binary, "zig-out/bin/ghostshare.exe")
     subprocess.run([makensis, "/NOCD", "/WX", str(script.resolve())], check=True)
     setup = Path(installer.group(1).replace("$$", "$"))
     sign(setup)

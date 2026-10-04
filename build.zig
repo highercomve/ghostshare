@@ -37,8 +37,8 @@ pub fn build(b: *std.Build) void {
     const config = b.addOptions();
     config.addOption([]const u8, "version", version);
     const application = oriel.addApp(b, dep, .{
-        .name = "ghostfile",
-        .imports = &.{.{ .name = "ghostfile_config", .module = config.createModule() }},
+        .name = "ghostshare",
+        .imports = &.{.{ .name = "ghostshare_config", .module = config.createModule() }},
         .root_source_file = b.path("src/main.zig"),
         .icon = b.path("icon.png"), // High-resolution PNG (1024x1024 recommended)
         .frontend = .{
@@ -52,8 +52,8 @@ pub fn build(b: *std.Build) void {
         },
         .permissions = .{ .notifications = "Notify you when files arrive" },
         .package = .{
-            .id = "dev.ghostfile.App",
-            .name = "GhostFile",
+            .id = "dev.ghostshare.App",
+            .name = "GhostShare",
             // .publisher = "Your Name <you@example.com>", // default: from the app id
             .summary = "Share files with computers and Android Quick Share",
             .version = version,
@@ -66,11 +66,11 @@ pub fn build(b: *std.Build) void {
     // matching Rust target and target libraries; this build supports the host.
     const rust_target = b.option([]const u8, "rust-target", "Rust target triple (required for desktop cross compilation)");
     const cargo = if (android) b.addSystemCommand(&.{ "cargo", "ndk", "--platform", "29", "--target", if (target.result.cpu.arch == .aarch64) "arm64-v8a" else "x86_64", "build" }) else b.addSystemCommand(&.{ "cargo", "build" });
-    cargo.addArgs(&.{ "--locked", "--release", "--package", "ghostfile-quickshare", "--target-dir", b.pathFromRoot("target") });
+    cargo.addArgs(&.{ "--locked", "--release", "--package", "ghostshare-quickshare", "--target-dir", b.pathFromRoot("target") });
     if (android) cargo.addArg("--no-default-features");
     if (!android) if (rust_target) |triple| cargo.addArgs(&.{ "--target", triple });
     const triple = if (android) (if (target.result.cpu.arch == .aarch64) "aarch64-linux-android" else "x86_64-linux-android") else rust_target;
-    const library_name = if (target.result.os.tag == .windows and target.result.abi == .msvc) "ghostfile_quickshare.lib" else "libghostfile_quickshare.a";
+    const library_name = if (target.result.os.tag == .windows and target.result.abi == .msvc) "ghostshare_quickshare.lib" else "libghostshare_quickshare.a";
     const library_path = if (triple) |t| b.fmt("target/{s}/release/{s}", .{ t, library_name }) else b.fmt("target/release/{s}", .{library_name});
     application.exe.root_module.addObjectFile(b.path(library_path));
     application.exe.step.dependOn(&cargo.step);
@@ -98,6 +98,6 @@ pub fn build(b: *std.Build) void {
     const verify = b.addRunArtifact(verifier);
     if (b.args) |args| verify.addArgs(args);
     b.step("verify-updates", "Verify signed release manifests and update payloads").dependOn(&verify.step);
-    const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostfile-quickshare" });
+    const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostshare-quickshare" });
     b.step("test", "Test the Quick Share bridge").dependOn(&tests.step);
 }

@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 defaults:
   run:
-    working-directory: ghostfile
+    working-directory: ghostshare
 env:
   ORIEL_REF: v0.9.0
   ZIG_VERSION: 0.16.0
@@ -50,12 +50,12 @@ jobs:
         run: pacman -Syu --noconfirm --needed git openssh ca-certificates curl pkgconf gtk4 webkitgtk-6.0 wayland wayland-protocols libxkbcommon libxtst libx11 dbus ttf-dejavu python python-gobject python-pillow rust protobuf base-devel go squashfs-tools xorg-server-xvfb xdotool imagemagick
       - uses: actions/checkout@v4
         with:
-          path: ghostfile
+          path: ghostshare
       - uses: actions/checkout@v4
         with:
           repository: highercomve/Oriel
           ref: ${{ env.ORIEL_REF }}
-          path: oriel
+          path: oriel-ghostshare
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -63,7 +63,7 @@ jobs:
       - name: Package tools
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
       - name: Rust and protocol tests
-        run: cargo test --locked -p ghostfile-quickshare -p rqs_lib
+        run: cargo test --locked -p ghostshare-quickshare -p rqs_lib
       - name: Oriel packages (native UI)
         run: oriel package -Dnative_ui -Doptimize=ReleaseSafe
       - name: Encrypted transfer integration tests
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
-          path: ghostfile/dist/
+          path: ghostshare/dist/
           if-no-files-found: error
   macos:
     needs: framework-ready
@@ -90,12 +90,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: ghostfile
+          path: ghostshare
       - uses: actions/checkout@v4
         with:
           repository: highercomve/Oriel
           ref: ${{ env.ORIEL_REF }}
-          path: oriel
+          path: oriel-ghostshare
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -109,21 +109,21 @@ jobs:
         run: |
           test -n "$CERT" && test -n "$ORIEL_MACOS_CERT_PASSWORD"
           umask 077
-          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/ghostfile.p12"
-          oriel signing import "$RUNNER_TEMP/ghostfile.p12" --password-env ORIEL_MACOS_CERT_PASSWORD
+          printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/ghostshare.p12"
+          oriel signing import "$RUNNER_TEMP/ghostshare.p12" --password-env ORIEL_MACOS_CERT_PASSWORD
       - name: Tests
-        run: cargo test --locked -p ghostfile-quickshare -p rqs_lib
+        run: cargo test --locked -p ghostshare-quickshare -p rqs_lib
       - name: Oriel packages
         env:
           ORIEL_MACOS_SIGN_IDENTITY: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.sign) && secrets.ORIEL_MACOS_SIGN_IDENTITY || '' }}
         run: oriel package -Dnative_ui -Doptimize=ReleaseSafe
       - name: Verify signed app
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.sign)
-        run: codesign --verify --deep --strict zig-out/package/GhostFile.app
+        run: codesign --verify --deep --strict zig-out/package/GhostShare.app
       - name: Remove imported keychain
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/ghostfile.p12"
+          rm -f "$RUNNER_TEMP/ghostshare.p12"
           security delete-keychain oriel-signing.keychain-db || true
       - run: python3 scripts/collect-release.py macos-arm64
       - name: Sign updater manifests
@@ -134,7 +134,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: ghostfile/dist/
+          path: ghostshare/dist/
           if-no-files-found: error
   windows:
     needs: framework-ready
@@ -143,16 +143,16 @@ jobs:
     defaults:
       run:
         shell: pwsh
-        working-directory: ghostfile
+        working-directory: ghostshare
     steps:
       - uses: actions/checkout@v4
         with:
-          path: ghostfile
+          path: ghostshare
       - uses: actions/checkout@v4
         with:
           repository: highercomve/Oriel
           ref: ${{ env.ORIEL_REF }}
-          path: oriel
+          path: oriel-ghostshare
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
-          path: ghostfile/dist/
+          path: ghostshare/dist/
           if-no-files-found: error
   android:
     needs: framework-ready
@@ -188,12 +188,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: ghostfile
+          path: ghostshare
       - uses: actions/checkout@v4
         with:
           repository: highercomve/Oriel
           ref: ${{ env.ORIEL_REF }}
-          path: oriel
+          path: oriel-ghostshare
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -227,7 +227,7 @@ jobs:
         run: |
           test -n "$KEYSTORE" && test -n "$ORIEL_ANDROID_KEYSTORE_PASSWORD" && test -n "$ORIEL_ANDROID_KEY_ALIAS" && test -n "$ORIEL_ANDROID_KEY_PASSWORD"
           umask 077
-          export ORIEL_ANDROID_KEYSTORE="$RUNNER_TEMP/ghostfile.keystore"
+          export ORIEL_ANDROID_KEYSTORE="$RUNNER_TEMP/ghostshare.keystore"
           trap 'rm -f "$ORIEL_ANDROID_KEYSTORE"' EXIT
           printf '%s' "$KEYSTORE" | base64 --decode > "$ORIEL_ANDROID_KEYSTORE"
           oriel android build -Dnative_ui -Doptimize=ReleaseSafe
@@ -244,7 +244,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: android
-          path: ghostfile/dist/
+          path: ghostshare/dist/
           if-no-files-found: error
   release:
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.sign)
@@ -255,15 +255,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: ghostfile
+          path: ghostshare
       - uses: actions/checkout@v4
         with:
           repository: highercomve/Oriel
           ref: ${{ env.ORIEL_REF }}
-          path: oriel
+          path: oriel-ghostshare
       - uses: actions/download-artifact@v4
         with:
-          path: ghostfile/dist
+          path: ghostshare/dist
           merge-multiple: true
       - run: python3 scripts/combine-updates.py
       - uses: mlugg/setup-zig@v2
@@ -274,11 +274,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: signed-update-feed
-          path: ghostfile/dist/latest.json
+          path: ghostshare/dist/latest.json
       - name: Publish release packages
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --title "GhostFile $RELEASE_TAG"
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --title "GhostShare $RELEASE_TAG"

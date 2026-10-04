@@ -1,15 +1,21 @@
-# GhostFile
+# GhostShare
 
 A native Oriel desktop app for sharing files over your local network with other computers and Android Quick Share. The UI runs on Oriel’s `native_ui` renderer (QuickJS, native DOM, Yoga and platform drawing), without a WebView.
 
 ## Run
 
-Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostFile uses the Oriel development checkout at `../oriel` (locally `/home/projects/personal/oriel`). CI waits for the official `v0.9.0` tag, checks out that release alongside GhostFile, and builds its CLI from source. Platform builds are skipped while that Oriel release is pending.
+For a fresh checkout, put the development framework beside this repository:
+
+```sh
+git clone --branch notification-actions https://github.com/highercomve/Oriel.git ../oriel-ghostshare
+```
+
+Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel development checkout on `notification-actions`, in an isolated worktree at `../oriel-ghostshare` (created from `/home/projects/personal/oriel`). CI waits for the official `v0.9.0` tag, checks out that release alongside GhostShare, and builds its CLI from source. Platform builds are skipped while that Oriel release is pending.
 
 ```sh
 python3 scripts/setup-oriel.py
-../oriel/zig-out/bin/oriel build -Dnative_ui
-./zig-out/bin/ghostfile
+../oriel-ghostshare/zig-out/bin/oriel build -Dnative_ui
+./zig-out/bin/ghostshare
 ```
 
 Native rendering is the default, so `zig build -Doptimize=ReleaseSafe` works too. Cargo builds the protocol core into a static library and Zig links it into the application. The first build needs network access to fetch dependencies. There is no separate transfer daemon to install.
@@ -20,9 +26,9 @@ Native rendering is the default, so `zig build -Doptimize=ReleaseSafe` works too
 ./install-local.sh
 ```
 
-Builds the native app and installs `~/.local/bin/ghostfile`, its icon, and
-`~/.local/share/applications/dev.ghostfile.App.desktop`. The desktop launcher
-appears as **GhostFile** in your application menu. No sudo is needed. If
+Builds the native app and installs `~/.local/bin/ghostshare`, its icon, and
+`~/.local/share/applications/dev.ghostshare.App.desktop`. The desktop launcher
+appears as **GhostShare** in your application menu. The installer replaces the previous GhostFile launcher and binary; files already saved in `Downloads/GhostFile` are preserved. No sudo is needed. If
 `XDG_DATA_HOME` is set, the launcher and icon use that directory instead.
 
 Use `./install-local.sh --skip-build` to install the existing build. Additional
@@ -30,18 +36,18 @@ Zig options can be forwarded, for example `./install-local.sh -Doptimize=Release
 
 ## Share
 
-1. Open GhostFile on both computers, or open Android Quick Share’s receiving screen on the phone. Keep both devices on the same LAN/Wi-Fi network.
-2. Choose files in GhostFile. Use the button again to add more files to the batch.
+1. Open GhostShare on both computers, or open Android Quick Share’s receiving screen on the phone. Keep both devices on the same LAN/Wi-Fi network.
+2. Choose files in GhostShare. Use the button again to add more files to the batch.
 3. Select a nearby device and click Send.
 4. Compare the confirmation PIN on both devices and accept on the receiver.
 
-Received files go to `Downloads/GhostFile` (or `GhostFile` inside the home directory if no Downloads directory is configured). Incoming files need approval. Choose **Accept to default** or **Choose folder…** for each request. Completed Activity entries provide **Open file** and **Open folder**, using the actual saved filename. Existing files are preserved using numbered names. Partial files still owned by a failed or cancelled transfer are removed.
+Received files go to `Downloads/GhostShare` (or `GhostShare` inside the home directory if no Downloads directory is configured). Incoming files need approval. Choose **Accept to default** or **Choose folder…** for each request. Completed Activity entries provide **Open file** and **Open folder**, using the actual saved filename. Existing files are preserved using numbered names. Partial files still owned by a failed or cancelled transfer are removed.
 
 Visibility controls whether this computer advertises itself to nearby devices. Hiding does not block an already-known direct address or end an active transfer. The manual address field accepts a Quick Share destination’s IP and port, for example `192.168.1.20:54321`.
 
 ## Android compatibility
 
-GhostFile uses the real Nearby Share / Quick Share LAN protocol through RQuickShare: mDNS discovery, UKEY2/P-256 key exchange, authenticated encrypted messages, confirmation PINs and file payloads. Bluetooth discovery triggers are enabled by default; they help Android advertise its receiving endpoint when BlueZ and an adapter are available. If a phone does not appear, enable Bluetooth and open its Quick Share receiving screen. Some Android/Samsung versions require additional interoperability work.
+GhostShare uses the real Nearby Share / Quick Share LAN protocol through RQuickShare: mDNS discovery, UKEY2/P-256 key exchange, authenticated encrypted messages, confirmation PINs and file payloads. Bluetooth discovery triggers are enabled by default; they help Android advertise its receiving endpoint when BlueZ and an adapter are available. If a phone does not appear, enable Bluetooth and open its Quick Share receiving screen. Some Android/Samsung versions require additional interoperability work.
 
 This implementation uses a shared local network. Wi-Fi Direct, hotspot creation, cloud transfers and Google contacts/account visibility are not implemented. Sending links, text and Wi-Fi credentials is outside the current file-sharing UI.
 
@@ -49,11 +55,11 @@ Verified on Linux: native rendering and file selection, live Android discovery, 
 
 ## Appearance and background receiving
 
-Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostFile receiving; the tray offers Show, Send files, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Clicking an incoming notification opens the window to review the PIN and choose a save location. No request is automatically accepted. Use Quit GhostFile in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
+Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostShare receiving; the tray offers Show, Send files, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Incoming notifications show the confirmation PIN and offer Review request, Accept to default, and Decline. Review opens the window to choose a save location. Completed notifications offer Open file and Open folder. No request is automatically accepted. Use Quit GhostShare in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
 
 ## CI and signed releases
 
-[GitHub Actions](https://github.com/highercomve/ghostfile/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. After Oriel 0.9.0 is published, a manual workflow with `sign=true` verifies signed builds without publishing.
+[GitHub Actions](https://github.com/highercomve/ghostshare/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. After Oriel 0.9.0 is published, a manual workflow with `sign=true` verifies signed builds without publishing.
 
 Certificates generated with `oriel signing create` are persistent, self-signed identities. They do not establish public SmartScreen/Gatekeeper trust or Apple notarization. Keep the originals and passwords in `~/.config/oriel/keys` backed up privately; never regenerate for routine releases.
 
@@ -68,7 +74,7 @@ Signing material is supplied only to trusted tag or explicitly signed manual bui
 
 ## Updates
 
-GhostFile automatically checks for updates on launch and every six hours. Check manually from the tray or the update bar. Desktop updates require **Install update**, verify the Ed25519 manifest plus payload size and SHA-256, replace the installed executable/AppImage or complete macOS app bundle, then offer **Restart now**. Restart is blocked while transfers are pending or active. System-owned installations may require installation through the package manager; the local installer and user-owned app packages can update directly.
+GhostShare automatically checks for updates on launch and every six hours. Check manually from the tray or the update bar. Desktop updates require **Install update**, verify the Ed25519 manifest plus payload size and SHA-256, replace the installed executable/AppImage or complete macOS app bundle, then offer **Restart now**. Restart is blocked while transfers are pending or active. System-owned installations may require installation through the package manager; the local installer and user-owned app packages can update directly.
 
 Tagged releases publish `latest.json`, six individually signed update entries, and the corresponding payloads. Raw Linux executables and AppImages have separate entries. Windows updates contain the signed app executable; macOS updates contain the signed `.app` bundle. Android checks the same signed feed and offers the release APK download; Android installation requires the system installer and is not performed silently.
 
@@ -100,4 +106,4 @@ Screenshots and logs go in `artifacts/`. `GHOSTFILE_PORT` can fix the Quick Shar
 - `native/quickshare/`: Rust C ABI, runtime lifecycle and bounded UI state.
 - `vendor/rquickshare/`: pinned protocol engine with local interoperability and file-handling fixes; see `UPSTREAM.md`.
 
-GPL-3.0-only, consistent with the integrated RQuickShare dependency. Oriel is MIT-licensed. GhostFile is an independent, unofficial application. Quick Share is a Google/Samsung trademark.
+GPL-3.0-only, consistent with the integrated RQuickShare dependency. Oriel is MIT-licensed. GhostShare is an independent, unofficial application. Quick Share is a Google/Samsung trademark.

@@ -6,19 +6,19 @@ const app = @import("oriel_app");
 const updates = @import("updates.zig");
 
 pub const std_options: std.Options = .{ .logFn = oriel.log.logFn };
-extern fn ghostfile_start(directory: [*:0]const u8) ?[*:0]u8;
-extern fn ghostfile_request(request: [*:0]const u8) ?[*:0]u8;
-extern fn ghostfile_free(pointer: [*:0]u8) void;
-extern fn ghostfile_stop() void;
-extern fn ghostfile_set_event_callback(callback: ?*const fn ([*:0]const u8) callconv(.c) void) void;
-extern fn ghostfile_desktop_init(application: ?*anyopaque, window: ?*anyopaque) void;
-extern fn ghostfile_desktop_cleanup() void;
-extern fn ghostfile_desktop_dark() c_int;
-extern fn ghostfile_desktop_quit() void;
-extern fn ghostfile_desktop_notify(id: [*:0]const u8, kind: [*:0]const u8, name: [*:0]const u8) void;
-extern fn ghostfile_select_folder() ?[*:0]u8;
-extern fn ghostfile_desktop_free(pointer: [*:0]u8) void;
-extern fn ghostfile_open_path(path: [*:0]const u8) c_int;
+extern fn ghostshare_start(directory: [*:0]const u8) ?[*:0]u8;
+extern fn ghostshare_request(request: [*:0]const u8) ?[*:0]u8;
+extern fn ghostshare_free(pointer: [*:0]u8) void;
+extern fn ghostshare_stop() void;
+extern fn ghostshare_set_event_callback(callback: ?*const fn ([*:0]const u8) callconv(.c) void) void;
+extern fn ghostshare_desktop_init(application: ?*anyopaque, window: ?*anyopaque) void;
+extern fn ghostshare_desktop_cleanup() void;
+extern fn ghostshare_desktop_dark() c_int;
+extern fn ghostshare_desktop_quit() void;
+extern fn ghostshare_desktop_notify(id: [*:0]const u8, kind: [*:0]const u8, name: [*:0]const u8, pin: [*:0]const u8) void;
+extern fn ghostshare_select_folder() ?[*:0]u8;
+extern fn ghostshare_desktop_free(pointer: [*:0]u8) void;
+extern fn ghostshare_open_path(path: [*:0]const u8) c_int;
 var tray: ?*oriel.tray.Tray = null;
 var startup_error: ?[]const u8 = null;
 var device_visible: std.atomic.Value(bool) = .init(true);
@@ -29,8 +29,8 @@ fn request_json(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
     defer allocator.free(json);
     const terminated = try allocator.dupeZ(u8, json);
     defer allocator.free(terminated);
-    const response = ghostfile_request(terminated) orelse return error.QuickShareUnavailable;
-    defer ghostfile_free(response);
+    const response = ghostshare_request(terminated) orelse return error.QuickShareUnavailable;
+    defer ghostshare_free(response);
     return allocator.dupe(u8, std.mem.span(response));
 }
 pub const Events = struct {
@@ -38,6 +38,7 @@ pub const Events = struct {
     tray_send: bool,
     tray_visibility: bool,
     tray_update: bool,
+    notification_error: []const u8,
     review_request: struct { id: []const u8 },
 };
 fn show_window() void {
@@ -82,31 +83,31 @@ fn tray_set_visibility(visible: bool) void {
     defer allocator.free(response);
 }
 fn setup() !void {
-    if (desktop_linux) ghostfile_desktop_init(oriel.App.gtk_app, oriel.App.main_window);
+    if (desktop_linux) ghostshare_desktop_init(oriel.App.gtk_app, oriel.App.main_window);
     tray = oriel.tray.Tray.create(std.heap.smp_allocator, .{
-        .id = "dev.ghostfile.App",
-        .title = "GhostFile",
+        .id = "dev.ghostshare.App",
+        .title = "GhostShare",
         .tooltip = "Share files nearby",
         .icon = .{ .png = app.icon_bytes },
         .menu = &.{
-            .{ .item = .{ .id = "show", .label = "Show GhostFile" } },
+            .{ .item = .{ .id = "show", .label = "Show GhostShare" } },
             .{ .item = .{ .id = "send", .label = "Send files…" } },
             .{ .check = .{ .id = "visible", .label = "Visible to nearby devices", .checked = true } },
             .separator,
             .{ .item = .{ .id = "updates", .label = "Check for updates" } },
             .separator,
-            .{ .item = .{ .id = "quit", .label = "Quit GhostFile" } },
+            .{ .item = .{ .id = "quit", .label = "Quit GhostShare" } },
         },
         .on_menu = tray_menu,
         .on_activate = show_window,
     }) catch null;
     if (@hasDecl(oriel.notification, "onAction")) oriel.notification.onAction(notification_action);
-    ghostfile_set_event_callback(transfer_event);
+    ghostshare_set_event_callback(transfer_event);
 }
-export fn ghostfile_theme_changed(dark: c_int) void {
+export fn ghostshare_theme_changed(dark: c_int) void {
     oriel.App.events(Events).emit(.system_theme, .{ .dark = dark != 0 });
 }
-export fn ghostfile_review_transfer(id: [*:0]const u8) void {
+export fn ghostshare_review_transfer(id: [*:0]const u8) void {
     notification_action(std.mem.span(id), null);
 }
 const NotificationEvent = struct { bytes: [4096]u8, len: usize };
@@ -121,43 +122,94 @@ fn notify_main(event: NotificationEvent) void {
     var arena: std.heap.ArenaAllocator = .init(std.heap.smp_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const parsed = std.json.parseFromSlice(struct { id: []const u8, kind: []const u8, name: []const u8 }, allocator, event.bytes[0..event.len], .{}) catch return;
+    const parsed = std.json.parseFromSlice(struct { id: []const u8, kind: []const u8, name: []const u8, pin: ?[]const u8 = null }, allocator, event.bytes[0..event.len], .{}) catch return;
     const dismiss = std.mem.eql(u8, parsed.value.kind, "dismiss");
     if (desktop_linux and (dismiss or !@hasDecl(oriel.notification, "onAction"))) {
         const id = allocator.dupeZ(u8, parsed.value.id) catch return;
         const kind = allocator.dupeZ(u8, parsed.value.kind) catch return;
         const name = allocator.dupeZ(u8, parsed.value.name) catch return;
-        ghostfile_desktop_notify(id, kind, name);
+        const pin = allocator.dupeZ(u8, parsed.value.pin orelse "") catch return;
+        ghostshare_desktop_notify(id, kind, name, pin);
         return;
     }
     if (dismiss) return;
     const incoming = std.mem.eql(u8, parsed.value.kind, "request");
-    const body = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ if (incoming) "" else "Files from ", parsed.value.name, if (incoming) " wants to share files. Review the code and choose where to save." else " are ready. Open GhostFile to view them." }) catch return;
+    const body = std.fmt.allocPrint(allocator, "{s}{s}{s}{s}", .{ parsed.value.name, if (incoming) " wants to share files. Compare this code before accepting: " else " · Files are ready. Open GhostShare to view them.", (if (incoming) parsed.value.pin orelse "" else ""), if (incoming) " · Accept saves to the default folder." else "" }) catch return;
     if (@hasDecl(oriel.notification, "onAction")) {
         oriel.notification.notify(.{
             .id = parsed.value.id,
             .title = if (incoming) "Incoming files" else "Files received",
             .body = body,
-            .actions = if (incoming) &.{.{ .id = "review", .label = "Review request" }} else &.{},
+            .actions = if (incoming) (if (parsed.value.pin != null) &.{
+                .{ .id = "review", .label = "Review request" },
+                .{ .id = "accept", .label = "Accept to default" },
+                .{ .id = "decline", .label = "Decline" },
+            } else &.{ .{ .id = "review", .label = "Review request" }, .{ .id = "decline", .label = "Decline" } }) else &.{
+                .{ .id = "open_file", .label = "Open file" },
+                .{ .id = "open_folder", .label = "Open folder" },
+            },
         }) catch {};
     } else {
         oriel.notification.notify(.{ .id = parsed.value.id, .title = if (incoming) "Incoming files" else "Files received", .body = body }) catch {};
     }
 }
+const NotificationTask = struct {
+    id: [256]u8,
+    len: usize,
+    action: enum { accept, decline, open_file, open_folder },
+};
+export fn ghostshare_notification_action(id: [*:0]const u8, action: [*:0]const u8) void {
+    notification_action(std.mem.span(id), std.mem.span(action));
+}
 fn notification_action(id: []const u8, action: ?[]const u8) void {
-    _ = action;
+    if (action) |selected| {
+        const kind = std.meta.stringToEnum(@FieldType(NotificationTask, "action"), selected);
+        if (kind) |value| {
+            if (id.len > 256) return;
+            var task: NotificationTask = .{ .id = undefined, .len = id.len, .action = value };
+            @memcpy(task.id[0..id.len], id);
+            oriel.App.spawn(notification_task, .{task}) catch {
+                show_window();
+                oriel.App.events(Events).emit(.notification_error, "Could not perform notification action. Please review the transfer.");
+            };
+            return;
+        }
+    }
     show_window();
     oriel.App.events(Events).emit(.review_request, .{ .id = id });
+}
+fn notification_task(task: NotificationTask) void {
+    var arena: std.heap.ArenaAllocator = .init(std.heap.smp_allocator);
+    defer arena.deinit();
+    perform_notification_task(arena.allocator(), task) catch {
+        oriel.App.runOnMain({}, notification_failed);
+    };
+}
+fn perform_notification_task(allocator: std.mem.Allocator, task: NotificationTask) !void {
+    const id = task.id[0..task.len];
+    switch (task.action) {
+        .open_file, .open_folder => try Commands.open_transfer(allocator, .{ .id = id, .folder = task.action == .open_folder }),
+        .accept, .decline => {
+            const response = try Commands.decide(allocator, .{ .id = id, .accept = task.action == .accept });
+            const parsed = try std.json.parseFromSlice(struct { ok: bool }, allocator, response, .{ .ignore_unknown_fields = true });
+            defer parsed.deinit();
+            if (!parsed.value.ok) return error.RequestExpired;
+        },
+    }
+}
+fn notification_failed(_: void) void {
+    show_window();
+    oriel.App.events(Events).emit(.notification_error, "This notification is no longer available. Review the transfer in GhostShare.");
 }
 fn second_instance(args: []const []const u8) void {
     _ = args;
     show_window();
 }
 fn request_quit() void {
-    if (desktop_linux) ghostfile_desktop_quit() else ghostfile_quit_requested();
+    if (desktop_linux) ghostshare_desktop_quit() else ghostshare_quit_requested();
 }
-export fn ghostfile_quit_requested() void {
-    ghostfile_set_event_callback(null);
+export fn ghostshare_quit_requested() void {
+    ghostshare_set_event_callback(null);
     oriel.App.quit(0);
 }
 
@@ -204,12 +256,12 @@ pub const Commands = struct {
     }
     pub fn select_folder(allocator: std.mem.Allocator) !?[]const u8 {
         if (!desktop_linux) return oriel.ipc.fail("Folder selection is currently supported on Linux", .{});
-        const path = ghostfile_select_folder() orelse return null;
-        defer ghostfile_desktop_free(path);
+        const path = ghostshare_select_folder() orelse return null;
+        defer ghostshare_desktop_free(path);
         return try allocator.dupe(u8, std.mem.span(path));
     }
     pub fn system_info() struct { dark: ?bool } {
-        return .{ .dark = if (desktop_linux) ghostfile_desktop_dark() != 0 else null };
+        return .{ .dark = if (desktop_linux) ghostshare_desktop_dark() != 0 else null };
     }
     pub fn quit() void {
         request_quit();
@@ -223,7 +275,7 @@ pub const Commands = struct {
         const path = try allocator.dupeZ(u8, parsed.value.data orelse return error.MissingPath);
         defer allocator.free(path);
         if (desktop_linux) {
-            if (ghostfile_open_path(path) == 0) return oriel.ipc.fail("Could not open this file or folder", .{});
+            if (ghostshare_open_path(path) == 0) return oriel.ipc.fail("Could not open this file or folder", .{});
         } else return oriel.ipc.fail("Opening files is currently supported on Linux", .{});
     }
     pub fn cancel(allocator: std.mem.Allocator, args: struct { id: []const u8 }) ![]const u8 {
@@ -236,24 +288,24 @@ pub const Commands = struct {
 pub fn main(init: std.process.Init) !u8 {
     const directory = if (builtin.abi == .android) try std.fs.path.join(init.arena.allocator(), &.{ oriel.platform.impl.paths.externalFilesDir() orelse return error.MissingAndroidStorage, "Received" }) else "";
     const directory_z = try init.arena.allocator().dupeZ(u8, directory);
-    const response = ghostfile_start(directory_z) orelse return error.QuickShareUnavailable;
-    defer ghostfile_free(response);
+    const response = ghostshare_start(directory_z) orelse return error.QuickShareUnavailable;
+    defer ghostshare_free(response);
     const result = try std.json.parseFromSlice(struct { ok: bool }, init.gpa, std.mem.span(response), .{ .ignore_unknown_fields = true });
     defer result.deinit();
     if (!result.value.ok) startup_error = try init.arena.allocator().dupe(u8, std.mem.span(response));
-    defer ghostfile_stop();
+    defer ghostshare_stop();
     defer {
-        ghostfile_set_event_callback(null);
+        ghostshare_set_event_callback(null);
         if (@hasDecl(oriel.notification, "onAction")) oriel.notification.onAction(null);
         if (tray) |icon| icon.deinit();
-        if (desktop_linux) ghostfile_desktop_cleanup();
+        if (desktop_linux) ghostshare_desktop_cleanup();
     }
     return oriel.main(init, .{ .commands = Commands, .events = Events }, .{
         .setup = setup,
         .on_close = if (builtin.abi == .android) .quit else .hide,
         .on_second_instance = second_instance,
-        .id = "dev.ghostfile.App",
-        .title = "GhostFile",
+        .id = "dev.ghostshare.App",
+        .title = "GhostShare",
         .width = 980,
         .height = 860,
         .assets = app.assets,

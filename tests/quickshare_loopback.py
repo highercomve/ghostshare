@@ -18,29 +18,29 @@ def port():
 
 def worker(connection, directory, bind_port):
     os.environ["GHOSTFILE_PORT"] = str(bind_port)
-    library = ctypes.CDLL(str(ROOT / "target/release/libghostfile_quickshare.so"))
-    for name in ("ghostfile_start", "ghostfile_request"):
+    library = ctypes.CDLL(str(ROOT / "target/release/libghostshare_quickshare.so"))
+    for name in ("ghostshare_start", "ghostshare_request"):
         fn = getattr(library, name)
         fn.argtypes = [ctypes.c_char_p]
         fn.restype = ctypes.c_void_p
-    library.ghostfile_free.argtypes = [ctypes.c_void_p]
+    library.ghostshare_free.argtypes = [ctypes.c_void_p]
     def invoke(fn, value):
         pointer = fn(value)
         assert pointer
         try:
             result = json.loads(ctypes.string_at(pointer))
         finally:
-            library.ghostfile_free(pointer)
+            library.ghostshare_free(pointer)
         return result
-    connection.send(invoke(library.ghostfile_start, os.fsencode(directory)))
+    connection.send(invoke(library.ghostshare_start, os.fsencode(directory)))
     try:
         while True:
             value = connection.recv()
             if value is None:
                 break
-            connection.send(invoke(library.ghostfile_request, json.dumps(value).encode()))
+            connection.send(invoke(library.ghostshare_request, json.dumps(value).encode()))
     finally:
-        library.ghostfile_stop()
+        library.ghostshare_stop()
         connection.close()
 
 def request(connection, command, **args):
@@ -63,7 +63,7 @@ def wait(connection, predicate):
 
 def main():
     mp.set_start_method("spawn")
-    with tempfile.TemporaryDirectory(prefix="ghostfile-test-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="ghostshare-test-") as temporary:
         directory = Path(temporary)
         destination = directory / "received"
         destination.mkdir()
@@ -83,7 +83,7 @@ def main():
                 assert ready["ok"], ready
             sender, receiver = connections
             files = []
-            for name, data in (("hello.txt", b"Hello from GhostFile!\n"), ("binary.dat", os.urandom(2_000_000)), ("empty.txt", b"")):
+            for name, data in (("hello.txt", b"Hello from GhostShare!\n"), ("binary.dat", os.urandom(2_000_000)), ("empty.txt", b"")):
                 path = directory / name
                 path.write_bytes(data)
                 files.append(str(path))

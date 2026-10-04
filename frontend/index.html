@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>GhostFile</title><link rel="stylesheet" href="style.css"></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>GhostShare</title><link rel="stylesheet" href="style.css"></head>
 <body>
 <div class="app">
 <header>
-  <div class="brand"><svg width="36" height="40" viewBox="0 0 36 40" fill="none"><path d="M6 33V17a12 12 0 0 1 24 0v16l-6-4-6 4-6-4-6 4Z" fill="#e36749"/><circle cx="14" cy="17" r="2" fill="#fff7ed"/><circle cx="23" cy="17" r="2" fill="#fff7ed"/></svg><span>GhostFile</span></div>
+  <div class="brand"><svg width="36" height="40" viewBox="0 0 36 40" fill="none"><path d="M6 33V17a12 12 0 0 1 24 0v16l-6-4-6 4-6-4-6 4Z" fill="#e36749"/><circle cx="14" cy="17" r="2" fill="#fff7ed"/><circle cx="23" cy="17" r="2" fill="#fff7ed"/></svg><span>GhostShare</span></div>
   <button id="visibility" class="presence" aria-label="Toggle device visibility">Starting Quick Share…</button>
 </header>
 <main>
@@ -18,11 +18,11 @@
 <button id="choose" class="primary">Choose files <span>＋</span></button><p class="caption">Add files one at a time. Send them together.</p></section>
 <section class="panel devices-panel"><div class="section-top"><h2>02 <span>Choose a device</span></h2><span id="peer-count" class="count">0</span></div>
 <div id="peers"></div>
-<div id="peer-empty" class="peer-empty"><div class="search-mark">◎</div><h3>Looking around…</h3><p>Open GhostFile on your other computer, or open Quick Share on Android and turn on receiving.</p><p class="small">Keep both devices on the same Wi-Fi network. Bluetooth helps Android discovery.</p></div>
+<div id="peer-empty" class="peer-empty"><div class="search-mark">◎</div><h3>Looking around…</h3><p>Open GhostShare on your other computer, or open Quick Share on Android and turn on receiving.</p><p class="small">Keep both devices on the same Wi-Fi network. Bluetooth helps Android discovery.</p></div>
 <div class="manual"><label for="address">Have an address?</label><div class="manual-row"><input id="address" placeholder="192.168.1.20:54321" aria-label="Device IP address and port"><button id="manual-send" class="secondary" disabled>Send ↗</button></div><p class="small">The destination must speak Quick Share.</p></div></section>
 </div>
 <section class="activity"><div class="section-top"><h2>Activity</h2><span class="small">Direct, encrypted transfers</span></div><div id="transfers"><p class="activity-empty">Your files’ next adventure starts here.</p></div></section>
-<p class="background-note small">Close the window to keep receiving. Use the tray to send files or reopen GhostFile. <button id="quit" class="text-button">Quit GhostFile</button></p>
+<p class="background-note small">Close the window to keep receiving. Use the tray to send files or reopen GhostShare. <button id="quit" class="text-button">Quit GhostShare</button></p>
 </main>
 <div class="update-bar"><span id="update-status" role="status">Checking for updates…</span><button id="update-check" class="text-button">Check for updates</button><button id="update-install" class="secondary" hidden>Install update</button><button id="update-restart" class="secondary" hidden>Restart now</button></div>
 <footer><span id="identity">Connecting…</span><span id="downloads">Received files stay on this computer.</span></footer>

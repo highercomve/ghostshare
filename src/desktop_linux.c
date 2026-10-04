@@ -2,9 +2,10 @@
 #include <gio/gio.h>
 #include <string.h>
 
-extern void ghostfile_theme_changed(int dark);
-extern void ghostfile_review_transfer(const char *id);
-extern void ghostfile_quit_requested(void);
+extern void ghostshare_theme_changed(int dark);
+extern void ghostshare_review_transfer(const char *id);
+extern void ghostshare_notification_action(const char *id, const char *action);
+extern void ghostshare_quit_requested(void);
 static GtkApplication *application;
 static GtkWindow *parent;
 static GSettings *appearance;
@@ -12,7 +13,7 @@ static GDBusConnection *bus;
 static guint portal_subscription;
 static int portal_scheme = -1;
 
-int ghostfile_desktop_dark(void) {
+int ghostshare_desktop_dark(void) {
     const char *override = g_getenv("ORIEL_COLOR_SCHEME");
     if (override) return strcmp(override, "dark") == 0;
     if (portal_scheme == 1 || portal_scheme == 2) return portal_scheme == 1;
@@ -31,7 +32,7 @@ int ghostfile_desktop_dark(void) {
     g_free(theme);
     return dark;
 }
-static void theme_changed(void) { ghostfile_theme_changed(ghostfile_desktop_dark()); }
+static void theme_changed(void) { ghostshare_theme_changed(ghostshare_desktop_dark()); }
 static void settings_changed(GSettings *settings, gchar *key, gpointer data) {
     (void)settings; (void)key; (void)data; theme_changed();
 }
@@ -52,9 +53,16 @@ static void portal_changed(GDBusConnection *connection, const gchar *sender, con
 }
 static void review(GSimpleAction *action, GVariant *parameter, gpointer data) {
     (void)action; (void)data;
-    if (parameter) ghostfile_review_transfer(g_variant_get_string(parameter, NULL));
+    if (parameter) ghostshare_review_transfer(g_variant_get_string(parameter, NULL));
 }
-void ghostfile_desktop_init(void *app, void *window) {
+static void transfer_action(GSimpleAction *action, GVariant *parameter, gpointer data) {
+    (void)action; (void)data;
+    if (!parameter) return;
+    const char *id, *selected;
+    g_variant_get(parameter, "(&s&s)", &id, &selected);
+    ghostshare_notification_action(id, selected);
+}
+void ghostshare_desktop_init(void *app, void *window) {
     application = g_object_ref(app); parent = window;
     GSettingsSchemaSource *source = g_settings_schema_source_get_default();
     GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source, "org.gnome.desktop.interface", TRUE) : NULL;
@@ -88,32 +96,46 @@ void ghostfile_desktop_init(void *app, void *window) {
     g_signal_connect(action, "activate", G_CALLBACK(review), NULL);
     g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(action));
     g_object_unref(action);
+    action = g_simple_action_new("transfer-action", G_VARIANT_TYPE("(ss)"));
+    g_signal_connect(action, "activate", G_CALLBACK(transfer_action), NULL);
+    g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(action));
+    g_object_unref(action);
     theme_changed();
 }
-void ghostfile_desktop_cleanup(void) {
+void ghostshare_desktop_cleanup(void) {
     if (bus && portal_subscription) g_dbus_connection_signal_unsubscribe(bus, portal_subscription);
     g_clear_object(&bus); g_clear_object(&appearance);
     GtkSettings *settings = gtk_settings_get_default();
     if (settings) g_signal_handlers_disconnect_by_func(settings, G_CALLBACK(gtk_changed), NULL);
-    if (application) g_action_map_remove_action(G_ACTION_MAP(application), "review-transfer");
+    if (application) {
+        g_action_map_remove_action(G_ACTION_MAP(application), "review-transfer");
+        g_action_map_remove_action(G_ACTION_MAP(application), "transfer-action");
+    }
     g_clear_object(&application); parent = NULL;
 }
-void ghostfile_desktop_notify(const char *id, const char *kind, const char *name) {
+void ghostshare_desktop_notify(const char *id, const char *kind, const char *name, const char *pin) {
     if (!application) return;
     if (!strcmp(kind, "dismiss")) { g_application_withdraw_notification(G_APPLICATION(application), id); return; }
     int incoming = !strcmp(kind, "request");
     GNotification *notification = g_notification_new(incoming ? "Incoming files" : "Files received");
-    char *body = g_strdup_printf(incoming ? "%s wants to share files. Review the code and choose where to save." : "Files from %s are ready. Open GhostFile to view them.", name);
+    char *body = incoming ? g_strdup_printf("%s wants to share files. Compare this code before accepting: %s. Accept saves to the default folder.", name, pin) : g_strdup_printf("Files from %s are ready. Open GhostShare to view them.", name);
     g_notification_set_body(notification, body); g_free(body);
     g_notification_set_priority(notification, incoming ? G_NOTIFICATION_PRIORITY_HIGH : G_NOTIFICATION_PRIORITY_NORMAL);
-    GIcon *icon = g_themed_icon_new("dev.ghostfile.App");
+    GIcon *icon = g_themed_icon_new("dev.ghostshare.App");
     g_notification_set_icon(notification, icon); g_object_unref(icon);
     g_notification_set_default_action_and_target(notification, "app.review-transfer", "s", id);
-    g_notification_add_button_with_target(notification, incoming ? "Review" : "Open GhostFile", "app.review-transfer", "s", id);
+    if (incoming) {
+        g_notification_add_button_with_target(notification, "Review request", "app.review-transfer", "s", id);
+        if (pin[0]) g_notification_add_button_with_target(notification, "Accept to default", "app.transfer-action", "(ss)", id, "accept");
+        g_notification_add_button_with_target(notification, "Decline", "app.transfer-action", "(ss)", id, "decline");
+    } else {
+        g_notification_add_button_with_target(notification, "Open file", "app.transfer-action", "(ss)", id, "open_file");
+        g_notification_add_button_with_target(notification, "Open folder", "app.transfer-action", "(ss)", id, "open_folder");
+    }
     g_application_send_notification(G_APPLICATION(application), id, notification);
     g_object_unref(notification);
 }
-int ghostfile_open_path(const char *path) {
+int ghostshare_open_path(const char *path) {
     gchar *uri = g_filename_to_uri(path, NULL, NULL);
     if (!uri) return 0;
     gboolean result = g_app_info_launch_default_for_uri(uri, NULL, NULL);
@@ -133,7 +155,7 @@ static gboolean folder_start(gpointer data) {
     gtk_file_dialog_select_folder(dialog, parent, NULL, folder_finished, data);
     g_object_unref(dialog); return G_SOURCE_REMOVE;
 }
-char *ghostfile_select_folder(void) {
+char *ghostshare_select_folder(void) {
     FolderCall call = {0};
     g_mutex_init(&call.mutex); g_cond_init(&call.condition);
     g_mutex_lock(&call.mutex);
@@ -143,13 +165,13 @@ char *ghostfile_select_folder(void) {
     g_mutex_clear(&call.mutex); g_cond_clear(&call.condition);
     return call.path;
 }
-void ghostfile_desktop_free(void *pointer) { g_free(pointer); }
+void ghostshare_desktop_free(void *pointer) { g_free(pointer); }
 static gboolean quit_idle(gpointer data) {
     (void)data;
-    ghostfile_quit_requested();
+    ghostshare_quit_requested();
     return G_SOURCE_REMOVE;
 }
-void ghostfile_desktop_quit(void) {
+void ghostshare_desktop_quit(void) {
     GListModel *windows = gtk_window_get_toplevels();
     guint count = g_list_model_get_n_items(windows);
     for (guint index = count; index > 0; index--) {

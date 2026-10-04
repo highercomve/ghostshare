@@ -20,7 +20,7 @@ function element(tag, className, text) {
 function clear(node) { node.innerHTML = ""; }
 function error(message) { $("error").textContent = String(message); $("error").hidden = false; }
 async function call(command, args) {
-  if (!window.oriel) throw new Error("Open GhostFile as a desktop app to share files.");
+  if (!window.oriel) throw new Error("Open GhostShare as a desktop app to share files.");
   const response = await window.oriel.invoke(command, args || null);
   if (typeof response !== "string") return response;
   const result = JSON.parse(response);
@@ -183,13 +183,15 @@ $("visibility").addEventListener("click", async () => {
 });
 render_files(); poll(); setInterval(poll, 800);
 
+let theme_event_received = false;
 function set_theme(dark) { document.documentElement.setAttribute("data-theme", dark ? "dark" : "light"); }
 if (window.oriel) {
-  call("system_info").then(info => typeof info.dark === "boolean" && set_theme(info.dark)).catch(err => error(err.message || err));
-  window.oriel.listen("system_theme", info => typeof info.dark === "boolean" && set_theme(info.dark));
+  call("system_info").then(info => !theme_event_received && typeof info.dark === "boolean" && set_theme(info.dark)).catch(err => error(err.message || err));
+  window.oriel.listen("system_theme", info => { theme_event_received = true; if (typeof info.dark === "boolean") set_theme(info.dark); });
   window.oriel.listen("tray_send", () => choose_files());
   window.oriel.listen("tray_visibility", () => poll());
   window.oriel.listen("review_request", () => poll());
+  window.oriel.listen("notification_error", error);
 }
 $("quit").addEventListener("click", () => call("quit"));
 
@@ -201,7 +203,7 @@ async function check_updates() {
   try {
     const info = await call("update_info"); update_android = info.android; update_version = info.version;
     const update = await call("updater_check");
-    $("update-status").textContent = update.available ? "GhostFile " + update.version + " is available" : "GhostFile " + update_version + " · Up to date";
+    $("update-status").textContent = update.available ? "GhostShare " + update.version + " is available" : "GhostShare " + update_version + " · Up to date";
     $("update-install").hidden = !update.available;
     $("update-install").textContent = update_android ? "Download APK" : "Install update";
   } catch (err) { $("update-status").textContent = "Updates unavailable · Try again later"; }
@@ -211,7 +213,7 @@ function active_transfers() { return model && (model.transfers || []).some(t => 
 $("update-check").addEventListener("click", check_updates);
 $("update-install").addEventListener("click", async () => {
   if (update_busy) return;
-  if (update_android) { await window.oriel.openExternal("https://github.com/highercomve/ghostfile/releases/latest"); return; }
+  if (update_android) { await window.oriel.openExternal("https://github.com/highercomve/ghostshare/releases/latest"); return; }
   if (active_transfers()) { $("update-status").textContent = "Finish or cancel your transfers before updating"; return; }
   update_busy = true; $("update-install").disabled = true; $("update-check").disabled = true;
   try {
