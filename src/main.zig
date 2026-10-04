@@ -13,6 +13,7 @@ extern fn ghostfile_set_event_callback(callback: ?*const fn ([*:0]const u8) call
 extern fn ghostfile_desktop_init(application: ?*anyopaque, window: ?*anyopaque) void;
 extern fn ghostfile_desktop_cleanup() void;
 extern fn ghostfile_desktop_dark() c_int;
+extern fn ghostfile_desktop_quit() void;
 extern fn ghostfile_desktop_notify(id: [*:0]const u8, kind: [*:0]const u8, name: [*:0]const u8) void;
 extern fn ghostfile_select_folder() ?[*:0]u8;
 extern fn ghostfile_desktop_free(pointer: [*:0]u8) void;
@@ -41,21 +42,28 @@ fn show_window() void {
 }
 fn tray_menu(id: []const u8, checked: ?bool) void {
     _ = checked;
-    if (std.mem.eql(u8, id, "quit")) { oriel.App.quit(0); return; }
+    if (std.mem.eql(u8, id, "quit")) {
+        request_quit();
+        return;
+    }
     show_window();
     if (std.mem.eql(u8, id, "send")) oriel.App.events(Events).emit(.tray_send, true);
 }
 fn setup() !void {
     if (desktop_linux) ghostfile_desktop_init(oriel.App.gtk_app, oriel.App.main_window);
     tray = oriel.tray.Tray.create(std.heap.smp_allocator, .{
-        .id = "dev.ghostfile.App", .title = "GhostFile", .tooltip = "Share files nearby",
+        .id = "dev.ghostfile.App",
+        .title = "GhostFile",
+        .tooltip = "Share files nearby",
         .icon = .{ .png = app.icon_bytes },
         .menu = &.{
             .{ .item = .{ .id = "show", .label = "Show GhostFile" } },
             .{ .item = .{ .id = "send", .label = "Send files…" } },
             .separator,
             .{ .item = .{ .id = "quit", .label = "Quit GhostFile" } },
-        }, .on_menu = tray_menu, .on_activate = show_window,
+        },
+        .on_menu = tray_menu,
+        .on_activate = show_window,
     }) catch null;
     if (@hasDecl(oriel.notification, "onAction")) oriel.notification.onAction(notification_action);
     ghostfile_set_event_callback(transfer_event);
@@ -94,7 +102,17 @@ fn notification_action(id: []const u8, action: ?[]const u8) void {
     show_window();
     oriel.App.events(Events).emit(.review_request, .{ .id = id });
 }
-fn second_instance(args: []const []const u8) void { _ = args; show_window(); }
+fn second_instance(args: []const []const u8) void {
+    _ = args;
+    show_window();
+}
+fn request_quit() void {
+    if (desktop_linux) ghostfile_desktop_quit() else ghostfile_quit_requested();
+}
+export fn ghostfile_quit_requested() void {
+    ghostfile_set_event_callback(null);
+    oriel.App.quit(0);
+}
 
 pub const Commands = struct {
     pub const async_commands = .{ "snapshot", "select_file", "send_files", "decide", "cancel", "visibility", "select_folder", "open_transfer" };
@@ -126,7 +144,9 @@ pub const Commands = struct {
     pub fn system_info() struct { dark: ?bool } {
         return .{ .dark = if (desktop_linux) ghostfile_desktop_dark() != 0 else null };
     }
-    pub fn quit() void { oriel.App.quit(0); }
+    pub fn quit() void {
+        request_quit();
+    }
     pub fn open_transfer(allocator: std.mem.Allocator, args: struct { id: []const u8, index: usize = 0, folder: bool = false }) !void {
         const response = try request_json(allocator, .{ .command = "resolve_path", .id = args.id, .index = args.index, .folder = args.folder });
         defer allocator.free(response);

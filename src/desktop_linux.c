@@ -4,6 +4,7 @@
 
 extern void ghostfile_theme_changed(int dark);
 extern void ghostfile_review_transfer(const char *id);
+extern void ghostfile_quit_requested(void);
 static GtkApplication *application;
 static GtkWindow *parent;
 static GSettings *appearance;
@@ -87,6 +88,7 @@ void ghostfile_desktop_init(void *app, void *window) {
     g_signal_connect(action, "activate", G_CALLBACK(review), NULL);
     g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(action));
     g_object_unref(action);
+    theme_changed();
 }
 void ghostfile_desktop_cleanup(void) {
     if (bus && portal_subscription) g_dbus_connection_signal_unsubscribe(bus, portal_subscription);
@@ -142,3 +144,19 @@ char *ghostfile_select_folder(void) {
     return call.path;
 }
 void ghostfile_desktop_free(void *pointer) { g_free(pointer); }
+static gboolean quit_idle(gpointer data) {
+    (void)data;
+    ghostfile_quit_requested();
+    return G_SOURCE_REMOVE;
+}
+void ghostfile_desktop_quit(void) {
+    GListModel *windows = gtk_window_get_toplevels();
+    guint count = g_list_model_get_n_items(windows);
+    for (guint index = 0; index < count; index++) {
+        GtkWindow *window = g_list_model_get_item(windows, index);
+        if (window != parent) gtk_window_close(window);
+        g_object_unref(window);
+    }
+    /* Let dialog completions wake IPC workers before stopping the event loop. */
+    g_idle_add_full(G_PRIORITY_LOW, quit_idle, NULL, NULL);
+}

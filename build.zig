@@ -7,6 +7,8 @@ pub fn build(b: *std.Build) void {
     const target = oriel.resolveTarget(b, b.standardTargetOptions(.{}));
     const optimize = b.standardOptimizeOption(.{});
     const android = target.result.abi == .android;
+    const version = std.mem.trimStart(u8, b.option([]const u8, "app-version", "Package version") orelse b.graph.environ_map.get("GHOSTFILE_VERSION") orelse "0.1.0", "v");
+    _ = std.SemanticVersion.parse(version) catch @panic("Package version must be semantic version, e.g. 0.1.0");
     // Oriel's built-in modules and plugins. Switch on what the app uses:
     // anything left off is neither compiled nor linked.
     const dep = b.dependency("oriel", .{
@@ -51,7 +53,7 @@ pub fn build(b: *std.Build) void {
             .name = "GhostFile",
             // .publisher = "Your Name <you@example.com>", // default: from the app id
             .summary = "Share files with computers and Android Quick Share",
-            .version = "0.1.0",
+            .version = version,
         },
         // The isolation pattern: every call from the frontend to Zig goes
         // through isolation/hook.js first, in a frame the page can't reach.
@@ -80,6 +82,7 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .windows) {
         for ([_][]const u8{ "ws2_32", "userenv", "bcrypt", "ntdll", "iphlpapi", "psapi" }) |library| application.exe.root_module.linkSystemLibrary(library, .{});
     }
+    if (target.result.os.tag == .macos) application.exe.root_module.linkFramework("CoreBluetooth", .{});
     const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostfile-quickshare" });
     b.step("test", "Test the Quick Share bridge").dependOn(&tests.step);
 }
