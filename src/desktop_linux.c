@@ -54,7 +54,7 @@ static void review(GSimpleAction *action, GVariant *parameter, gpointer data) {
     if (parameter) ghostfile_review_transfer(g_variant_get_string(parameter, NULL));
 }
 void ghostfile_desktop_init(void *app, void *window) {
-    application = app; parent = window;
+    application = g_object_ref(app); parent = window;
     GSettingsSchemaSource *source = g_settings_schema_source_get_default();
     GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source, "org.gnome.desktop.interface", TRUE) : NULL;
     if (schema) {
@@ -94,7 +94,7 @@ void ghostfile_desktop_cleanup(void) {
     GtkSettings *settings = gtk_settings_get_default();
     if (settings) g_signal_handlers_disconnect_by_func(settings, G_CALLBACK(gtk_changed), NULL);
     if (application) g_action_map_remove_action(G_ACTION_MAP(application), "review-transfer");
-    application = NULL; parent = NULL;
+    g_clear_object(&application); parent = NULL;
 }
 void ghostfile_desktop_notify(const char *id, const char *kind, const char *name) {
     if (!application) return;
@@ -135,7 +135,7 @@ char *ghostfile_select_folder(void) {
     FolderCall call = {0};
     g_mutex_init(&call.mutex); g_cond_init(&call.condition);
     g_mutex_lock(&call.mutex);
-    g_main_context_invoke(NULL, folder_start, &call);
+    g_idle_add_full(G_PRIORITY_DEFAULT, folder_start, &call, NULL);
     while (!call.done) g_cond_wait(&call.condition, &call.mutex);
     g_mutex_unlock(&call.mutex);
     g_mutex_clear(&call.mutex); g_cond_clear(&call.condition);

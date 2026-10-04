@@ -339,7 +339,9 @@ pub unsafe extern "C" fn ghostfile_start(directory: *const c_char) -> *mut c_cha
         let text = CStr::from_ptr(directory)
             .to_str()
             .map_err(|e| e.to_string())?;
-        let directory = if text.is_empty() {
+        let directory = if text.is_empty() && std::env::var_os("GHOSTFILE_DOWNLOAD_DIR").is_some() {
+            PathBuf::from(std::env::var_os("GHOSTFILE_DOWNLOAD_DIR").unwrap())
+        } else if text.is_empty() {
             let dirs = directories::UserDirs::new().ok_or("Could not locate home directory")?;
             dirs.download_dir()
                 .unwrap_or(dirs.home_dir())

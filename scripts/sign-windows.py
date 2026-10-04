@@ -13,8 +13,8 @@ signtool = str(sorted(sdk.glob("*/x64/signtool.exe"))[-1])
 makensis = shutil.which("makensis") or str(Path(os.environ["ProgramFiles(x86)"]) / "NSIS/makensis.exe")
 script = max(Path(".zig-cache").rglob("installer.nsi"), key=lambda p: p.stat().st_mtime)
 text = script.read_text()
-payload = re.search(r'^\s*File\s+"/oname=\$INSTDIR\\(?:ghostfile|\$\{EXE_NAME\})\.exe"\s+"([^"]+)"', text, re.M)
-installer = re.search(r'^OutFile\s+"([^"]+)"', text, re.M)
+payload = re.search(r'^!define BINARY_SRC\s+"([^"]+)"', text, re.M)
+installer = re.search(r'^!define OUT_FILE\s+"([^"]+)"', text, re.M)
 if not payload or not installer:
     raise SystemExit("Could not resolve app and installer from Oriel's NSIS script")
 with tempfile.TemporaryDirectory(prefix="ghostfile-sign-", dir=os.environ["RUNNER_TEMP"]) as temporary:
