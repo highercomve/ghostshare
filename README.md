@@ -7,10 +7,10 @@ A native Oriel desktop app for sharing files over your local network with other 
 For a fresh checkout, put the development framework beside this repository:
 
 ```sh
-git clone --branch notification-actions https://github.com/highercomve/Oriel.git ../oriel-ghostshare
+git clone --branch v0.9.0 https://github.com/highercomve/Oriel.git ../oriel-ghostshare
 ```
 
-Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel development checkout on `notification-actions`, in an isolated worktree at `../oriel-ghostshare` (created from `/home/projects/personal/oriel`). CI waits for the official `v0.9.0` tag, checks out that release alongside GhostShare, and builds its CLI from source. Platform builds are skipped while that Oriel release is pending.
+Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel checkout at `../oriel-ghostshare`. CI checks out the official `v0.9.0` release alongside GhostShare and builds its CLI from source.
 
 ```sh
 python3 scripts/setup-oriel.py
@@ -49,17 +49,17 @@ Visibility controls whether this computer advertises itself to nearby devices. H
 
 GhostShare uses the real Nearby Share / Quick Share LAN protocol through RQuickShare: mDNS discovery, UKEY2/P-256 key exchange, authenticated encrypted messages, confirmation PINs and file payloads. Bluetooth discovery triggers are enabled by default; they help Android advertise its receiving endpoint when BlueZ and an adapter are available. If a phone does not appear, enable Bluetooth and open its Quick Share receiving screen. Some Android/Samsung versions require additional interoperability work.
 
-This implementation uses a shared local network. Wi-Fi Direct, hotspot creation, cloud transfers and Google contacts/account visibility are not implemented. Sending links, text and Wi-Fi credentials is outside the current file-sharing UI.
+This implementation uses a shared local network. Wi-Fi Direct, hotspot creation, cloud transfers, Google contacts/account visibility and Wi-Fi credential sharing are not implemented. Plain text, links and files are supported.
 
 Verified on Linux: native rendering and file selection, live Android discovery, and encrypted multi-file loopback transfers. The user has also received files from a physical Pixel 8. Windows, macOS and Android app builds are being checked by CI; device testing is still required. Android app builds currently use app-specific external storage and LAN discovery without Bluetooth. Linux-specific folder selection and file opening are currently implemented; these controls on other platforms are not yet available.
 
 ## Appearance and background receiving
 
-Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostShare receiving; the tray offers Show, Send files, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Incoming notifications show the confirmation PIN and offer Accept, Review, and Deny. Accept saves to the default folder. Review opens the window to choose a save location. Completed notifications offer Open file and Open folder. No request is automatically accepted. Use Quit GhostShare in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
+Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostShare receiving; the tray offers Show, Send files, Send clipboard, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Incoming notifications show the confirmation PIN and offer Review request, Accept to default, and Decline. Accept saves to the default folder. Review opens the window to choose a save location. Completed notifications offer Open file and Open folder. No request is automatically accepted. Use Quit GhostShare in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
 
 ## CI and signed releases
 
-[GitHub Actions](https://github.com/highercomve/ghostshare/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. After Oriel 0.9.0 is published, a manual workflow with `sign=true` verifies signed builds without publishing.
+[GitHub Actions](https://github.com/highercomve/ghostshare/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. A manual workflow with `sign=true` verifies signed builds without publishing.
 
 Certificates generated with `oriel signing create` are persistent, self-signed identities. They do not establish public SmartScreen/Gatekeeper trust or Apple notarization. Keep the originals and passwords in `~/.config/oriel/keys` backed up privately; never regenerate for routine releases.
 
