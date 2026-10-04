@@ -48,11 +48,11 @@ Verified on Linux: native rendering and file selection, live Android discovery, 
 
 ## Appearance and background receiving
 
-Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostFile receiving; the tray offers Show, Send files and Quit. Clicking an incoming notification opens the window to review the PIN and choose a save location. No request is automatically accepted. Use Quit GhostFile in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
+Linux follows the desktop appearance setting (XDG Settings portal, GNOME setting, then GTK fallback), including changes while running. Closing the window keeps GhostFile receiving; the tray offers Show, Send files, Visible to nearby devices, Check for updates and Quit. The tray visibility checkbox and the window switch stay synchronized; toggling discovery keeps a hidden window hidden. Clicking an incoming notification opens the window to review the PIN and choose a save location. No request is automatically accepted. Use Quit GhostFile in the window or tray to stop the engine. A desktop tray host and notification service are needed for those integrations.
 
 ## CI and signed releases
 
-[GitHub Actions](https://github.com/highercomve/ghostfile/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds.
+[GitHub Actions](https://github.com/highercomve/ghostfile/actions) builds Oriel packages for Linux x86_64 (.deb/.rpm/AppImage), macOS arm64 (.dmg), Windows x86_64 (NSIS), and Android arm64/x86_64 (APK/AAB). Pushes to main and pull requests build without signing secrets. A `v*` tag signs Windows/macOS/Android packages and publishes a GitHub release only after every platform succeeds. A manual workflow with `sign=true` verifies signed builds without publishing.
 
 Certificates generated with `oriel signing create` are persistent, self-signed identities. They do not establish public SmartScreen/Gatekeeper trust or Apple notarization. Keep the originals and passwords in `~/.config/oriel/keys` backed up privately; never regenerate for routine releases.
 
@@ -61,8 +61,17 @@ Required repository secrets:
 - Android: `ORIEL_ANDROID_KEYSTORE_BASE64`, `ORIEL_ANDROID_KEYSTORE_PASSWORD`, `ORIEL_ANDROID_KEY_ALIAS`, `ORIEL_ANDROID_KEY_PASSWORD`.
 - macOS: `ORIEL_MACOS_CERT_P12_BASE64`, `ORIEL_MACOS_CERT_PASSWORD`, `ORIEL_MACOS_SIGN_IDENTITY`.
 - Windows: `ORIEL_WINDOWS_CERT_P12_BASE64`, `ORIEL_WINDOWS_CERT_PASSWORD`.
+- Updater: `ORIEL_UPDATE_KEY` (base64 Ed25519 seed). The public key is committed in `src/update-public-key.txt`.
 
-Signing material is supplied only to trusted tag builds, decoded into runner temporary directories, and removed after use. Local environment variables are not committed. Windows signs both the app payload and the rebuilt Oriel NSIS installer. Linux packages include SHA-256 checksums.
+Signing material is supplied only to trusted tag or explicitly signed manual builds, decoded into runner temporary directories, and removed after use. Local environment variables are not committed. Windows signs both the app payload and the rebuilt Oriel NSIS installer. Linux packages include SHA-256 checksums.
+
+## Updates
+
+GhostFile automatically checks for updates on launch and every six hours. Check manually from the tray or the update bar. Desktop updates require **Install update**, verify the Ed25519 manifest plus payload size and SHA-256, replace the installed executable/AppImage or complete macOS app bundle, then offer **Restart now**. Restart is blocked while transfers are pending or active. System-owned installations may require installation through the package manager; the local installer and user-owned app packages can update directly.
+
+Tagged releases publish `latest.json`, six individually signed update entries, and the corresponding payloads. Raw Linux executables and AppImages have separate entries. Windows updates contain the signed app executable; macOS updates contain the signed `.app` bundle. Android checks the same signed feed and offers the release APK download; Android installation requires the system installer and is not performed silently.
+
+The first tagged release establishes the feed. Before that, the update bar reports that updates are unavailable. Preserve `~/.config/oriel/keys/ghostfile-update.key` privately: changing this key prevents existing installations from accepting new releases. Generate a replacement only as part of a planned key migration, using `zig build keygen -- --name ghostfile-update`.
 
 ## Test
 
@@ -77,7 +86,8 @@ The loopback test loads the built Rust library in two separate processes. It ver
 For native UI verification on a private Xvfb display:
 
 ```sh
-../oriel/scripts/headless.sh ./tests/headless-ui.sh
+bash tests/headless.sh ./tests/headless-ui.sh
+bash tests/headless.sh python3 tests/desktop-integration.py
 ```
 
 Screenshots and logs go in `artifacts/`. `GHOSTFILE_PORT` can fix the Quick Share TCP port for firewall rules; otherwise the OS chooses it. `RUST_LOG=rqs_lib=debug` enables protocol diagnostics.

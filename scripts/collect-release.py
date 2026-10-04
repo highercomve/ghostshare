@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shutil
 import sys
+import tarfile
 
 platform = sys.argv[1]
 output = Path("dist")
@@ -14,6 +15,13 @@ for root in roots:
         if path.is_file() and path.suffix.lower() in {".deb", ".rpm", ".appimage", ".dmg", ".exe", ".apk", ".aab"}:
             shutil.copy2(path, output / f"ghostfile-{platform}-{path.name}")
             count += 1
+# Updater payloads preserve the executable or the complete signed app bundle.
+if platform in {"linux-x86_64", "windows-x86_64"}:
+    suffix = ".exe" if platform.startswith("windows") else ""
+    shutil.copy2(Path("zig-out/bin") / ("ghostfile" + suffix), output / (f"ghostfile-{platform}-update" + suffix))
+elif platform == "macos-arm64":
+    with tarfile.open(output / "ghostfile-macos-arm64-update.app.tar.gz", "w:gz") as archive:
+        archive.add("zig-out/package/GhostFile.app", arcname="GhostFile.app")
 if not count:
     raise SystemExit("No release packages found")
 with (output / f"SHA256SUMS-{platform}").open("w") as checksums:

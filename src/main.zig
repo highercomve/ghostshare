@@ -3,6 +3,7 @@ const oriel = @import("oriel");
 const builtin = @import("builtin");
 const desktop_linux = builtin.os.tag == .linux and builtin.abi != .android;
 const app = @import("oriel_app");
+const updates = @import("updates.zig");
 
 pub const std_options: std.Options = .{ .logFn = oriel.log.logFn };
 extern fn ghostfile_start(directory: [*:0]const u8) ?[*:0]u8;
@@ -20,6 +21,7 @@ extern fn ghostfile_desktop_free(pointer: [*:0]u8) void;
 extern fn ghostfile_open_path(path: [*:0]const u8) c_int;
 var tray: ?*oriel.tray.Tray = null;
 var startup_error: ?[]const u8 = null;
+var device_visible: std.atomic.Value(bool) = .init(true);
 
 const FileSelection = struct { path: []const u8, name: []const u8, size: u64 };
 fn request_json(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
@@ -34,6 +36,8 @@ fn request_json(allocator: std.mem.Allocator, value: anytype) ![]const u8 {
 pub const Events = struct {
     system_theme: struct { dark: bool },
     tray_send: bool,
+    tray_visibility: bool,
+    tray_update: bool,
     review_request: struct { id: []const u8 },
 };
 fn show_window() void {
@@ -41,13 +45,41 @@ fn show_window() void {
     if (oriel.App.getWindow("main")) |window| window.focus();
 }
 fn tray_menu(id: []const u8, checked: ?bool) void {
-    _ = checked;
+    if (std.mem.eql(u8, id, "visible")) {
+        oriel.App.spawn(tray_set_visibility, .{checked orelse !device_visible.load(.acquire)}) catch {
+            oriel.App.runOnMain({}, sync_tray_visibility);
+        };
+        return;
+    }
     if (std.mem.eql(u8, id, "quit")) {
         request_quit();
         return;
     }
     show_window();
+    if (std.mem.eql(u8, id, "updates")) oriel.App.events(Events).emit(.tray_update, true);
     if (std.mem.eql(u8, id, "send")) oriel.App.events(Events).emit(.tray_send, true);
+}
+fn sync_tray_visibility(_: void) void {
+    const visible = device_visible.load(.acquire);
+    if (tray) |icon| icon.setChecked("visible", visible);
+    oriel.App.events(Events).emit(.tray_visibility, visible);
+}
+fn set_visibility(allocator: std.mem.Allocator, visible: bool) ![]const u8 {
+    const response = try request_json(allocator, .{ .command = "visibility", .visible = visible });
+    errdefer allocator.free(response);
+    const parsed = try std.json.parseFromSlice(struct { ok: bool }, allocator, response, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    if (parsed.value.ok) device_visible.store(visible, .release);
+    oriel.App.runOnMain({}, sync_tray_visibility);
+    return response;
+}
+fn tray_set_visibility(visible: bool) void {
+    const allocator = std.heap.smp_allocator;
+    const response = set_visibility(allocator, visible) catch {
+        oriel.App.runOnMain({}, sync_tray_visibility);
+        return;
+    };
+    defer allocator.free(response);
 }
 fn setup() !void {
     if (desktop_linux) ghostfile_desktop_init(oriel.App.gtk_app, oriel.App.main_window);
@@ -59,6 +91,9 @@ fn setup() !void {
         .menu = &.{
             .{ .item = .{ .id = "show", .label = "Show GhostFile" } },
             .{ .item = .{ .id = "send", .label = "Send files…" } },
+            .{ .check = .{ .id = "visible", .label = "Visible to nearby devices", .checked = true } },
+            .separator,
+            .{ .item = .{ .id = "updates", .label = "Check for updates" } },
             .separator,
             .{ .item = .{ .id = "quit", .label = "Quit GhostFile" } },
         },
@@ -115,7 +150,27 @@ export fn ghostfile_quit_requested() void {
 }
 
 pub const Commands = struct {
-    pub const async_commands = .{ "snapshot", "select_file", "send_files", "decide", "cancel", "visibility", "select_folder", "open_transfer" };
+    pub const async_commands = .{ "snapshot", "select_file", "send_files", "decide", "cancel", "visibility", "select_folder", "open_transfer", "updater_check", "updater_install", "updater_restart" };
+    pub const update_info = updates.info;
+    pub const updater_check = updates.check;
+    pub const updater_install = updates.install;
+    pub fn updater_restart(allocator: std.mem.Allocator, io: std.Io) !void {
+        const response = try request_json(allocator, .{ .command = "snapshot" });
+        defer allocator.free(response);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+        defer parsed.deinit();
+        const data = parsed.value.object.get("data") orelse return error.QuickShareUnavailable;
+        for (data.object.get("transfers").?.array.items) |transfer| {
+            const state = transfer.object.get("state") orelse continue;
+            if (state != .string) return error.TransfersActive;
+            const terminal = [_][]const u8{ "Finished", "Rejected", "Cancelled", "Disconnected" };
+            const finished = for (terminal) |name| {
+                if (std.mem.eql(u8, name, state.string)) break true;
+            } else false;
+            if (!finished) return oriel.ipc.fail("Finish or cancel current transfers before restarting", .{});
+        }
+        try updates.restart(allocator, io);
+    }
     pub fn snapshot(allocator: std.mem.Allocator) ![]const u8 {
         if (startup_error) |message| return allocator.dupe(u8, message);
         return request_json(allocator, .{ .command = "snapshot" });
@@ -163,7 +218,7 @@ pub const Commands = struct {
         return request_json(allocator, .{ .command = "cancel", .id = args.id });
     }
     pub fn visibility(allocator: std.mem.Allocator, args: struct { visible: bool }) ![]const u8 {
-        return request_json(allocator, .{ .command = "visibility", .visible = args.visible });
+        return set_visibility(allocator, args.visible);
     }
 };
 pub fn main(init: std.process.Init) !u8 {

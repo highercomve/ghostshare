@@ -101,6 +101,14 @@ def main():
             assert Image.open("artifacts/system-light.png").getpixel((20, 100)) == (245, 241, 233)
             close_window(window)
             pump(lambda: not visible())
+            def tray_visible():
+                return "<1>" in dbus(tray, "/MenuBar", "com.canonical.dbusmenu.GetProperty", "3", "toggle-state")
+            assert tray_visible()
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "3", "clicked", "<0>", "0")
+            pump(lambda: not tray_visible())
+            assert not visible(), "Changing discovery visibility must keep the window hidden"
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "3", "clicked", "<0>", "0")
+            pump(tray_visible)
             path = folder / "received-test.txt"; path.write_text("Encrypted desktop integration test\n")
             request(sender, "send", address=f"127.0.0.1:{receiver_port}", name="Desktop", paths=[str(path)])
             pump(lambda: notifications)
@@ -128,10 +136,10 @@ def main():
             dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "2", "clicked", "<0>", "0")
             pump(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Choose a file to share"], capture_output=True).returncode == 0)
             # Quitting from the tray must cancel an open picker and stop cleanly.
-            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "4", "clicked", "<0>", "0")
+            dbus(tray, "/MenuBar", "com.canonical.dbusmenu.Event", "7", "clicked", "<0>", "0")
             pump(lambda: app.poll() is not None)
             assert app.returncode == 0
-            print("PASS: background receiving, clickable notifications, folder picker cancellation, default consent, tray send, live theme, quit with picker open")
+            print("PASS: background receiving, clickable notifications, folder picker cancellation, default consent, tray visibility, tray send, live theme, quit with picker open")
         finally:
             if app.poll() is None:
                 app.kill(); app.wait(8)

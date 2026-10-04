@@ -188,6 +188,50 @@ if (window.oriel) {
   call("system_info").then(info => typeof info.dark === "boolean" && set_theme(info.dark)).catch(err => error(err.message || err));
   window.oriel.listen("system_theme", info => typeof info.dark === "boolean" && set_theme(info.dark));
   window.oriel.listen("tray_send", () => choose_files());
+  window.oriel.listen("tray_visibility", () => poll());
   window.oriel.listen("review_request", () => poll());
 }
 $("quit").addEventListener("click", () => call("quit"));
+
+let update_busy = false, update_android = false, update_version = "";
+async function check_updates() {
+  if (update_busy) return;
+  update_busy = true; $("update-check").disabled = true;
+  $("update-status").textContent = "Checking for updates…";
+  try {
+    const info = await call("update_info"); update_android = info.android; update_version = info.version;
+    const update = await call("updater_check");
+    $("update-status").textContent = update.available ? "GhostFile " + update.version + " is available" : "GhostFile " + update_version + " · Up to date";
+    $("update-install").hidden = !update.available;
+    $("update-install").textContent = update_android ? "Download APK" : "Install update";
+  } catch (err) { $("update-status").textContent = "Updates unavailable · Try again later"; }
+  finally { update_busy = false; $("update-check").disabled = false; }
+}
+function active_transfers() { return model && (model.transfers || []).some(t => !terminal.has(t.state)); }
+$("update-check").addEventListener("click", check_updates);
+$("update-install").addEventListener("click", async () => {
+  if (update_busy) return;
+  if (update_android) { await window.oriel.openExternal("https://github.com/highercomve/ghostfile/releases/latest"); return; }
+  if (active_transfers()) { $("update-status").textContent = "Finish or cancel your transfers before updating"; return; }
+  update_busy = true; $("update-install").disabled = true; $("update-check").disabled = true;
+  try {
+    $("update-status").textContent = "Downloading and verifying update…";
+    await call("updater_install");
+    $("update-status").textContent = "Update installed · Restart when your transfers are finished";
+    $("update-install").hidden = true; $("update-restart").hidden = false;
+    $("update-check").hidden = true;
+  } catch (err) { $("update-status").textContent = "Update failed: " + (err.message || err); }
+  finally { update_busy = false; $("update-install").disabled = false; $("update-check").disabled = false; }
+});
+$("update-restart").addEventListener("click", async () => {
+  if (active_transfers()) { $("update-status").textContent = "Finish or cancel your transfers before restarting"; return; }
+  try { await call("updater_restart"); } catch (err) { $("update-status").textContent = String(err.message || err); }
+});
+if (window.oriel) {
+  window.oriel.listen("tray_update", check_updates);
+  window.oriel.listen("updater://progress", progress => {
+    $("update-status").textContent = "Downloading update · " + (progress.total ? Math.round(progress.downloaded / progress.total * 100) + "%" : bytes(progress.downloaded));
+  });
+  setTimeout(check_updates, 1500);
+  setInterval(() => { if ($("update-restart").hidden) check_updates(); }, 6 * 60 * 60 * 1000);
+}

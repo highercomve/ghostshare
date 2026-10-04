@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
         .dialog = true,
         .native_ui = b.option(bool, "native_ui", "Use the native renderer") orelse true,
         .notification = true,
-        .updater = false,
+        .updater = true,
         .sql = false,
         .fs_watch = false,
         .media_server = false,
@@ -34,8 +34,11 @@ pub fn build(b: *std.Build) void {
     // zig build run      run it
     // zig build check    type-check src/ without building
     // zig build package  installers: deb/rpm/AppImage (Linux), setup.exe (Windows), .app/.dmg (macOS)
+    const config = b.addOptions();
+    config.addOption([]const u8, "version", version);
     const application = oriel.addApp(b, dep, .{
         .name = "ghostfile",
+        .imports = &.{.{ .name = "ghostfile_config", .module = config.createModule() }},
         .root_source_file = b.path("src/main.zig"),
         .icon = b.path("icon.png"), // High-resolution PNG (1024x1024 recommended)
         .frontend = .{

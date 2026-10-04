@@ -76,3 +76,6 @@ footer { padding:15px 38px; border-top:1px solid var(--line); color:var(--muted)
 .background-note { border-top:1px solid var(--line); padding-top:14px; margin-top:22px; }
 .request-actions { flex-wrap:wrap; }
 [data-theme="dark"] .peer-row button { background:#45624b; }
+
+.update-bar { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 38px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+.update-bar button { font-size:11px; }

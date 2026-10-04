@@ -13,3 +13,4 @@ android/
 *.password
 .env
 .env.*
+*.key

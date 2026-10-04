@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory(prefix="ghostfile-sign-", dir=os.environ["RUNNE
     ps = "$c=[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($env:GHOSTFILE_CERT,$env:ORIEL_WINDOWS_CERT_PASSWORD); $s=[System.Security.Cryptography.X509Certificates.X509Store]::new('Root','CurrentUser'); $s.Open('ReadWrite'); $s.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($c.RawData)); $s.Close()"
     subprocess.run(["pwsh", "-NoProfile", "-Command", ps], env=dict(os.environ, GHOSTFILE_CERT=str(certificate)), check=True)
     def sign(path):
-        subprocess.run([signtool, "sign", "/f", str(certificate), "/p", os.environ["ORIEL_WINDOWS_CERT_PASSWORD"], "/fd", "SHA256", "/tr", "https://timestamp.digicert.com", "/td", "SHA256", str(path)], check=True)
+        result = subprocess.run([signtool, "sign", "/f", str(certificate), "/p", os.environ["ORIEL_WINDOWS_CERT_PASSWORD"], "/fd", "SHA256", "/tr", "https://timestamp.digicert.com", "/td", "SHA256", str(path)])
+        if result.returncode: raise SystemExit("Code signing failed (exit " + str(result.returncode) + ")")
         subprocess.run([signtool, "verify", "/pa", str(path)], check=True)
     binary = Path(payload.group(1).replace("$$", "$"))
     sign(binary)
