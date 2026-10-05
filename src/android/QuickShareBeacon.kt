@@ -15,6 +15,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -30,11 +31,8 @@ import dev.oriel.OrielRuntime
  * with BlueZ on Linux). Legacy advertising, non-connectable, no flags, name
  * or TX power: 28 bytes, within the 31 a legacy advertisement carries.
  *
- * liboriel.so calls `start` and `stop` over JNI (src/android_beacon.zig).
- * Advertising starts once the "Nearby devices" permission is granted
- * (asked here if it isn't: Oriel 0.9.1's Android runtime doesn't prompt for
- * its bluetooth kind yet) and the adapter is on, and follows the adapter
- * being turned off and on.
+ * Also manages the Android Wi-Fi MulticastLock required for mDNS discovery.
+ * Without this lock, Android drops multicast packets to 224.0.0.251:5353.
  */
 @Keep
 object QuickShareBeacon {
@@ -54,6 +52,7 @@ object QuickShareBeacon {
     private var advertiser: BluetoothLeAdvertiser? = null
     private var receiver: BroadcastReceiver? = null
     private var permissionAsked = false
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     private val callback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
@@ -74,10 +73,11 @@ object QuickShareBeacon {
         }
     }
 
-    /** Advertise until `stop` (any thread). */
+    /** Advertise until `stop` and hold the Wi-Fi multicast lock for discovery (any thread). */
     @JvmStatic
     fun start() {
         main.post {
+            acquireMulticast()
             if (wanted) return@post
             wanted = true
             watchAdapter()
@@ -85,7 +85,7 @@ object QuickShareBeacon {
         }
     }
 
-    /** Stop advertising (any thread; the system also stops it when the process ends). */
+    /** Stop advertising and release multicast lock (any thread). */
     @JvmStatic
     fun stop() {
         synchronized(this) {
@@ -93,8 +93,47 @@ object QuickShareBeacon {
             stopAdvertising()
         }
         main.post {
+            releaseMulticast()
             receiver?.let { r -> try { OrielRuntime.app.unregisterReceiver(r) } catch (_: Exception) {} }
             receiver = null
+        }
+    }
+
+    /** Explicitly acquire the Wi-Fi MulticastLock for mDNS discovery (any thread). */
+    @JvmStatic
+    fun acquireMulticastLock() {
+        main.post { acquireMulticast() }
+    }
+
+    /** Explicitly release the Wi-Fi MulticastLock (any thread). */
+    @JvmStatic
+    fun releaseMulticastLock() {
+        main.post { releaseMulticast() }
+    }
+
+    private fun acquireMulticast() {
+        if (multicastLock != null && multicastLock?.isHeld == true) return
+        try {
+            val wifi = OrielRuntime.app.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifi?.createMulticastLock("GhostShare mDNS")?.apply {
+                setReferenceCounted(false)
+                acquire()
+                Log.i(TAG, "Quick Share: Wi-Fi MulticastLock acquired")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Quick Share: failed to acquire MulticastLock", e)
+        }
+    }
+
+    private fun releaseMulticast() {
+        try {
+            multicastLock?.let {
+                if (it.isHeld) it.release()
+                Log.i(TAG, "Quick Share: Wi-Fi MulticastLock released")
+            }
+            multicastLock = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Quick Share: failed to release MulticastLock", e)
         }
     }
 
@@ -117,7 +156,8 @@ object QuickShareBeacon {
         if (!permissionAsked) {
             val host = OrielRuntime.foreground
             if (host == null) {
-                Log.w(TAG, "Quick Share BLE beacon: no permission and no window to ask from")
+                // If foreground activity is not yet ready, retry shortly
+                main.postDelayed({ if (wanted && !hasPermission()) askPermission() }, 500L)
                 return
             }
             permissionAsked = true

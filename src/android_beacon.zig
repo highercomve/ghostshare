@@ -27,6 +27,15 @@ pub fn stop() void {
     withEnv(stopWith);
 }
 
+pub fn callNamed(comptime method: [:0]const u8) void {
+    const S = struct {
+        fn f(env: *jni.Env) void {
+            call(env, method);
+        }
+    };
+    withEnv(S.f);
+}
+
 fn startWith(env: *jni.Env) void {
     call(env, "start");
 }
@@ -81,6 +90,52 @@ fn callIn(env: *jni.Env, comptime method: [:0]const u8) !void {
 
 /// dev.ghostshare.QuickShareBeacon, through the Application's class loader.
 fn helperClass(env: *jni.Env) !jni.jclass {
+    // 1. Prefer OrielRuntime's class loader (obtained directly from runtime_class)
+    if (oriel.android.runtime.runtime_class) |rt| {
+        if (getClassLoader(env, rt)) |loader| {
+            if (loadHelper(env, loader)) |cls| return cls;
+        }
+    }
+    // 2. Fall back to ActivityThread if runtime_class was not yet initialized
+    return helperClassViaActivityThread(env);
+}
+
+fn getClassLoader(env: *jni.Env, cls: jni.jclass) ?jni.jobject {
+    const f = env.functions;
+    const class_class = f.GetObjectClass(env, cls) orelse {
+        _ = env.clearException();
+        return null;
+    };
+    defer f.DeleteLocalRef(env, class_class);
+    const get_loader = f.GetMethodID(env, class_class, "getClassLoader", "()Ljava/lang/ClassLoader;") orelse {
+        _ = env.clearException();
+        return null;
+    };
+    const loader = f.CallObjectMethodA(env, cls, get_loader, null);
+    if (env.clearException()) return null;
+    return loader;
+}
+
+fn loadHelper(env: *jni.Env, loader: jni.jobject) ?jni.jclass {
+    const f = env.functions;
+    defer f.DeleteLocalRef(env, loader);
+    const class_loader = f.FindClass(env, "java/lang/ClassLoader") orelse {
+        _ = env.clearException();
+        return null;
+    };
+    defer f.DeleteLocalRef(env, class_loader);
+    const load_class = f.GetMethodID(env, class_loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;") orelse {
+        _ = env.clearException();
+        return null;
+    };
+    const name = newString(env, "dev.ghostshare.QuickShareBeacon") orelse return null;
+    defer f.DeleteLocalRef(env, name);
+    const helper = f.CallObjectMethodA(env, loader, load_class, &[_]jni.jvalue{.{ .l = name }});
+    if (env.clearException() or helper == null) return null;
+    return helper;
+}
+
+fn helperClassViaActivityThread(env: *jni.Env) !jni.jclass {
     const f = env.functions;
     const activity_thread = f.FindClass(env, "android/app/ActivityThread") orelse return error.NoActivityThread;
     const current_application = f.GetStaticMethodID(env, activity_thread, "currentApplication", "()Landroid/app/Application;") orelse return error.NoCurrentApplication;

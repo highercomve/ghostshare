@@ -6,30 +6,29 @@
 //! `android.permission.CHANGE_WIFI_MULTICAST_STATE` in the manifest (a normal
 //! permission: granted at install, no prompt), which Oriel emits for the
 //! `local_network` permission GhostShare declares in build.zig.
-//!
-//! Oriel 0.9.1's `oriel.network.acquireMulticast` still returns
-//! `error.Unsupported` on Android (its Wi-Fi MulticastLock isn't written
-//! yet), so this calls the framework over JNI with Oriel's bindings. It runs on GhostShare's main thread (not Oriel's UI
-//! thread), attached to the VM for the call: only framework classes are
-//! used, which the system class loader finds from any thread.
 
 const std = @import("std");
 const oriel = @import("oriel");
 const jni = oriel.android.jni;
+const android_beacon = @import("android_beacon.zig");
 
 const log = std.log.scoped(.ghostshare);
 
-/// A global reference to the held `WifiManager.MulticastLock`.
+/// A global reference to the held `WifiManager.MulticastLock` (fallback JNI path).
 var held: jni.jobject = null;
 
 /// Hold the multicast lock until `release` (or the process ends: the system
 /// drops a dead process's locks). Failures are logged, never fatal: manual
 /// addresses still work without discovery.
 pub fn acquire() void {
+    // 1. Acquire via Kotlin QuickShareBeacon helper (runs on main looper with Context)
+    android_beacon.callNamed("acquireMulticastLock");
+    // 2. Also acquire directly via JNI as fallback
     withEnv(acquireWith);
 }
 
 pub fn release() void {
+    android_beacon.callNamed("releaseMulticastLock");
     if (held == null) return;
     withEnv(releaseWith);
 }
@@ -67,14 +66,13 @@ fn acquireWith(env: *jni.Env) void {
     defer _ = f.PopLocalFrame(env, null);
     acquireIn(env) catch |err| {
         _ = env.clearException();
-        log.warn("multicast lock not acquired ({s}): mDNS discovery may find no devices on Wi-Fi", .{@errorName(err)});
+        log.warn("multicast lock JNI fallback not acquired ({s})", .{@errorName(err)});
     };
 }
 
 fn acquireIn(env: *jni.Env) !void {
     const f = env.functions;
-    // The Application: ActivityThread.currentApplication() (allowed for apps,
-    // and the only way to a Context from a thread Kotlin didn't call into).
+    // The Application: ActivityThread.currentApplication()
     const activity_thread = f.FindClass(env, "android/app/ActivityThread") orelse return error.NoActivityThread;
     const current_application = f.GetStaticMethodID(env, activity_thread, "currentApplication", "()Landroid/app/Application;") orelse return error.NoCurrentApplication;
     const app = f.CallStaticObjectMethodA(env, activity_thread, current_application, null);
@@ -97,12 +95,11 @@ fn acquireIn(env: *jni.Env) !void {
     f.CallVoidMethodA(env, lock, set_counted, &[_]jni.jvalue{.{ .z = 0 }});
     if (env.clearException()) return error.SetReferenceCountedFailed;
     const acquire_method = f.GetMethodID(env, lock_class, "acquire", "()V") orelse return error.NoAcquire;
-    // A SecurityException here: CHANGE_WIFI_MULTICAST_STATE isn't in the manifest.
     f.CallVoidMethodA(env, lock, acquire_method, null);
     if (env.clearException()) return error.AcquireFailed;
 
     held = f.NewGlobalRef(env, lock);
-    log.info("multicast lock acquired for mDNS discovery", .{});
+    log.info("multicast lock acquired for mDNS discovery (direct JNI)", .{});
 }
 
 fn releaseWith(env: *jni.Env) void {

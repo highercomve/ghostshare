@@ -732,6 +732,7 @@ impl OutboundRequest {
                             bytes_transferred: 0,
                             total_size: fmeta.size(),
                             file: Some(file),
+                            mime_type: String::new(),
                         },
                     );
                     file_metadata.push(fmeta);
@@ -886,6 +887,7 @@ impl OutboundRequest {
                                     bytes_transferred: curr_state.bytes_transferred,
                                     total_size: curr_state.total_size,
                                     file: None,
+                                    mime_type: String::new(),
                                 },
                                 buffer,
                                 bytes_read,

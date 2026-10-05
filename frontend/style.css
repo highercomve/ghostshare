@@ -102,3 +102,9 @@ footer { padding:15px 38px; border-top:1px solid var(--line); color:var(--muted)
 .path { background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:10px; margin:0; font-size:11px; overflow-wrap:anywhere; }
 .settings .request-actions { align-items:center; }
 .settings .request-actions .primary { gap:10px; }
+.path.folder { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; justify-content:center; }
+.folder-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.folder-detail { color:var(--muted); font-size:10px; overflow-wrap:anywhere; }
+.path.folder.unavailable { border-color:var(--error-ink); }
+.path.folder.unavailable .folder-detail { color:var(--error-ink); }
+.transfer-detail .relocation-error { color:var(--error-ink); }

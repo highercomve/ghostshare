@@ -73,6 +73,13 @@ enum Request {
     /// folder; `create` makes it (the default folder) instead of requiring
     /// an existing, writable one (a folder the user chose).
     DownloadDir { directory: String, create: bool },
+    /// A finished inbound transfer's files: `[{path, name, mime}]`, with
+    /// the staged path, the sender's name and MIME type ("" when unknown).
+    ReceivedFiles { id: String },
+    /// Where the app moved a transfer's files after it finished (Android:
+    /// into the folder chosen in Settings), shown in snapshots as
+    /// `relocations[id]`. The engine only keeps it.
+    Relocation { id: String, relocation: Value },
     Stop,
 }
 struct Model {
@@ -80,13 +87,14 @@ struct Model {
     visible: bool,
     peers: BTreeMap<String, EndpointInfo>,
     transfers: Vec<ChannelMessage>,
+    relocations: BTreeMap<String, Value>,
     error: Option<String>,
 }
 impl Model {
     fn snapshot(&self) -> Value {
         json!({"name":rqs_lib::device_name(), "download_dir":self.download_dir, "visible":self.visible,
             "peers":self.peers.values().collect::<Vec<_>>(), "transfers":self.transfers,
-            "error":self.error, "protocol":"Quick Share"})
+            "relocations":self.relocations, "error":self.error, "protocol":"Quick Share"})
     }
     fn transfer_event(&mut self, mut event: ChannelMessage) {
         if event.direction != ChannelDirection::LibToFront {
@@ -109,7 +117,8 @@ impl Model {
                     .iter()
                     .position(|t| terminal(t.state.as_ref()))
                 {
-                    self.transfers.remove(index);
+                    let removed = self.transfers.remove(index);
+                    self.relocations.remove(&removed.id);
                 } else {
                     self.error = Some("Too many active transfers".into());
                     return;
@@ -119,6 +128,21 @@ impl Model {
             self.transfers.push(event);
         }
     }
+}
+/// `[{path, name, mime}]` for a received transfer's saved files: names and
+/// MIME types fall back to the saved file's name and "" when the engine
+/// didn't record them.
+fn received_files(transfer: &ChannelMessage) -> Result<Value, String> {
+    let meta = transfer.meta.as_ref().ok_or("File metadata unavailable")?;
+    let saved = meta.saved_files.as_deref().unwrap_or_default();
+    let files = saved.iter().enumerate().map(|(i, path)| {
+        let name = meta.saved_names.as_ref().and_then(|n| n.get(i)).cloned()
+            .or_else(|| Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let mime = meta.saved_mime_types.as_ref().and_then(|m| m.get(i)).cloned().unwrap_or_default();
+        json!({"path":path, "name":name, "mime":mime})
+    });
+    Ok(Value::Array(files.collect()))
 }
 fn terminal(state: Option<&State>) -> bool {
     matches!(
@@ -247,6 +271,17 @@ async fn handle(
             let path = if folder { path.parent().ok_or("Folder unavailable")?.to_path_buf() } else { path };
             return Ok(json!(std::fs::canonicalize(path).map_err(|e| e.to_string())?));
         }
+        Request::ReceivedFiles { id } => {
+            let transfer = model.transfers.iter().find(|t| t.id == id).ok_or("Transfer not found")?;
+            if transfer.state != Some(State::Finished) || transfer.rtype != Some(TransferType::Inbound) {
+                return Err("Transfer has not completed".into());
+            }
+            return received_files(transfer);
+        }
+        Request::Relocation { id, relocation } => {
+            if !model.transfers.iter().any(|t| t.id == id) { return Err("Transfer not found".into()); }
+            model.relocations.insert(id, relocation);
+        }
         Request::DownloadDir { directory, create } => {
             let directory = download_directory(&directory, create)?;
             rqs.set_download_path(Some(directory.clone()));
@@ -280,6 +315,7 @@ async fn run(
         visible: true,
         peers: BTreeMap::new(),
         transfers: vec![],
+        relocations: BTreeMap::new(),
         error: None,
     };
     let port = std::env::var("GHOSTFILE_PORT")
@@ -584,6 +620,7 @@ mod tests {
             visible: true,
             peers: BTreeMap::new(),
             transfers: vec![],
+            relocations: BTreeMap::new(),
             error: None,
         };
         let mut event: ChannelMessage = serde_json::from_value(json!({"id":"1", "direction":"LibToFront",
@@ -603,6 +640,19 @@ mod tests {
             Some("1234")
         );
         assert_eq!(model.transfers[0].rtype, Some(TransferType::Inbound));
+    }
+    #[test]
+    fn received_files_pair_paths_with_names_and_types() {
+        let transfer = |meta: Value| -> ChannelMessage { serde_json::from_value(json!({"id":"1", "direction":"LibToFront", "meta":meta})).unwrap() };
+        let full = transfer(json!({"id":"1", "total_bytes":0, "ack_bytes":0,
+            "saved_files":["/r/photo.jpg", "/r/1_notes"], "saved_names":["photo.jpg", "notes"], "saved_mime_types":["image/jpeg", ""]}));
+        assert_eq!(received_files(&full).unwrap(), json!([
+            {"path":"/r/photo.jpg", "name":"photo.jpg", "mime":"image/jpeg"},
+            {"path":"/r/1_notes", "name":"notes", "mime":""},
+        ]));
+        // Without names (an older engine's metadata): the saved file's name.
+        let bare = transfer(json!({"id":"1", "total_bytes":0, "ack_bytes":0, "saved_files":["/r/a.txt"]}));
+        assert_eq!(received_files(&bare).unwrap(), json!([{"path":"/r/a.txt", "name":"a.txt", "mime":""}]));
     }
     fn scratch(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("ghostshare-test-{}-{name}", std::process::id()));
@@ -660,7 +710,7 @@ mod tests {
         // The same name again is not a change.
         rqs_lib::set_device_name(Some("Desk".into()));
         assert!(!changes.has_changed().unwrap());
-        let model = Model { download_dir: PathBuf::new(), visible: true, peers: BTreeMap::new(), transfers: vec![], error: None };
+        let model = Model { download_dir: PathBuf::new(), visible: true, peers: BTreeMap::new(), transfers: vec![], relocations: BTreeMap::new(), error: None };
         assert_eq!(model.snapshot()["name"], "Desk");
         rqs_lib::set_device_name(None);
         assert!(changes.has_changed().unwrap());
