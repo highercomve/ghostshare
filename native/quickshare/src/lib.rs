@@ -267,10 +267,7 @@ async fn run(
     directory: PathBuf,
 ) {
     let mut model = Model {
-        name: hostname::get()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned(),
+        name: rqs_lib::device_name(),
         download_dir: directory.clone(),
         visible: true,
         peers: BTreeMap::new(),
@@ -409,6 +406,18 @@ fn setup_logging() {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()))
         .with_writer(Mutex::new(writer))
         .try_init();
+}
+/// The name nearby devices see (the platform's device name, from Oriel),
+/// before `ghostshare_start`. Null or empty: the host name. Input must be a
+/// NUL-terminated string owned by the caller (invalid UTF-8 is replaced).
+#[no_mangle]
+pub unsafe extern "C" fn ghostshare_set_device_name(name: *const c_char) {
+    let name = if name.is_null() {
+        None
+    } else {
+        Some(CStr::from_ptr(name).to_string_lossy().into_owned())
+    };
+    rqs_lib::set_device_name(name);
 }
 /// Input must be a valid NUL-terminated UTF-8 string owned by the caller.
 #[no_mangle]

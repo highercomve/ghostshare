@@ -19,6 +19,38 @@ use ts_rs::TS;
 
 use crate::CUSTOM_DOWNLOAD;
 
+/// The name this device announces (mDNS endpoint info, connection
+/// requests), set by the embedding app; None: the host name.
+static DEVICE_NAME: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set (or clear, with None or an empty name) the name nearby devices see.
+/// Takes effect for services and connections started afterwards.
+pub fn set_device_name(name: Option<String>) {
+    let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).map(|mut n| {
+        // The endpoint info carries the name's length in one byte.
+        let mut end = n.len().min(u8::MAX as usize);
+        while !n.is_char_boundary(end) {
+            end -= 1;
+        }
+        n.truncate(end);
+        n
+    });
+    if let Ok(mut guard) = DEVICE_NAME.write() {
+        *guard = name;
+    }
+}
+
+/// The name nearby devices see: the one set with `set_device_name`, else
+/// the host name.
+pub fn device_name() -> String {
+    if let Some(name) = DEVICE_NAME.read().ok().and_then(|g| g.clone()) {
+        return name;
+    }
+    hostname::get()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "Device".into())
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, TS)]
 #[ts(export)]
 #[allow(dead_code)]

@@ -744,7 +744,6 @@ name = "ghostshare-quickshare"
 version = "0.1.0"
 dependencies = [
  "directories",
- "hostname",
  "rqs_lib",
  "serde",
  "serde_json",

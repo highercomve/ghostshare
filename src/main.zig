@@ -15,6 +15,7 @@ extern fn ghostshare_start(directory: [*:0]const u8) ?[*:0]u8;
 extern fn ghostshare_request(request: [*:0]const u8) ?[*:0]u8;
 extern fn ghostshare_free(pointer: [*:0]u8) void;
 extern fn ghostshare_stop() void;
+extern fn ghostshare_set_device_name(name: ?[*:0]const u8) void;
 extern fn ghostshare_set_event_callback(callback: ?*const fn ([*:0]const u8) callconv(.c) void) void;
 extern fn ghostshare_desktop_init(application: ?*anyopaque, window: ?*anyopaque) void;
 extern fn ghostshare_desktop_cleanup() void;
@@ -26,6 +27,8 @@ extern fn ghostshare_desktop_free(pointer: [*:0]u8) void;
 extern fn ghostshare_open_path(path: [*:0]const u8) c_int;
 var tray: ?*oriel.tray.Tray = null;
 var startup_error: ?[]const u8 = null;
+/// Where received files go: set by `main` before `start_engine`.
+var engine_directory: [:0]const u8 = "";
 var device_visible: std.atomic.Value(bool) = .init(true);
 
 const ClipboardText = struct { text: []const u8 };
@@ -90,7 +93,35 @@ fn tray_set_visibility(visible: bool) void {
     };
     defer allocator.free(response);
 }
+/// The name nearby devices see: the platform's device name (on Android,
+/// Settings > About phone) instead of the host name, which is "localhost"
+/// there. Failures leave the engine on the host name.
+fn set_device_name(gpa: std.mem.Allocator) void {
+    const name = oriel.system.deviceName(gpa) catch return;
+    defer gpa.free(name);
+    const name_z = gpa.dupeZ(u8, name) catch return;
+    defer gpa.free(name_z);
+    ghostshare_set_device_name(name_z);
+}
+/// Start the Quick Share engine; a failure it reports is kept for the page
+/// (`snapshot`).
+fn start_engine(gpa: std.mem.Allocator) !void {
+    set_device_name(gpa);
+    // Before the engine starts browsing, so its first mDNS answers get through.
+    android_multicast.acquire();
+    const response = ghostshare_start(engine_directory) orelse return error.QuickShareUnavailable;
+    defer ghostshare_free(response);
+    const result = try std.json.parseFromSlice(struct { ok: bool }, gpa, std.mem.span(response), .{ .ignore_unknown_fields = true });
+    defer result.deinit();
+    if (!result.value.ok) startup_error = try gpa.dupe(u8, std.mem.span(response));
+}
 fn setup() !void {
+    // Android: oriel.system.deviceName asks the UI thread, which runs only
+    // once oriel.main has started, so the engine starts here, before the
+    // page's first command.
+    if (builtin.abi == .android) start_engine(std.heap.smp_allocator) catch |err| {
+        startup_error = std.fmt.allocPrint(std.heap.smp_allocator, "{{\"ok\":false,\"error\":\"Quick Share could not start: {s}\"}}", .{@errorName(err)}) catch null;
+    };
     if (desktop_linux) ghostshare_desktop_init(oriel.App.gtk_app, oriel.App.main_window);
     tray = oriel.tray.Tray.create(std.heap.smp_allocator, .{
         .id = "dev.ghostshare.App",
@@ -319,20 +350,15 @@ pub fn main(init: std.process.Init) !u8 {
         for (argv, 1..) |*a, i| a.* = all_args[i];
 
         if (cli.isCliCommand(argv)) {
+            set_device_name(init.gpa);
             return cli.run(init, argv);
         }
     }
 
     const directory = if (builtin.abi == .android) try std.fs.path.join(init.arena.allocator(), &.{ oriel.platform.impl.paths.externalFilesDir() orelse return error.MissingAndroidStorage, "Received" }) else "";
-    const directory_z = try init.arena.allocator().dupeZ(u8, directory);
-    // Before the engine starts browsing, so its first mDNS answers get through.
-    android_multicast.acquire();
+    engine_directory = try init.arena.allocator().dupeZ(u8, directory);
     defer android_multicast.release();
-    const response = ghostshare_start(directory_z) orelse return error.QuickShareUnavailable;
-    defer ghostshare_free(response);
-    const result = try std.json.parseFromSlice(struct { ok: bool }, init.gpa, std.mem.span(response), .{ .ignore_unknown_fields = true });
-    defer result.deinit();
-    if (!result.value.ok) startup_error = try init.arena.allocator().dupe(u8, std.mem.span(response));
+    if (builtin.abi != .android) try start_engine(init.arena.allocator());
     defer ghostshare_stop();
     defer {
         ghostshare_set_event_callback(null);
