@@ -89,3 +89,16 @@ footer { padding:15px 38px; border-top:1px solid var(--line); color:var(--muted)
 #text-compose label { display:block; margin-bottom:8px; font-weight:600; }
 #clipboard-text { width:100%; min-height:130px; padding:12px; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; font:inherit; resize:vertical; }
 .text-preview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; margin:8px 0; }
+
+.header-actions { display:flex; align-items:center; gap:8px; }
+.gear { width:38px; height:38px; border-radius:19px; background:var(--tint); color:var(--green); font-size:18px; line-height:1; display:flex; align-items:center; justify-content:center; }
+.gear[aria-expanded="true"] { background:var(--green-solid); color:var(--on-green); }
+.settings { margin-bottom:18px; }
+.setting { margin-bottom:16px; }
+.setting label { display:block; font-size:11px; font-weight:600; margin-bottom:8px; }
+.setting .small { margin:7px 0 0; }
+.setting .text-button { font-size:10px; padding:0 2px; text-decoration:underline; }
+.field-error { color:var(--error-ink); background:var(--error-bg); border-radius:6px; padding:8px 10px; font-size:11px; margin:8px 0 0; }
+.path { background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:10px; margin:0; font-size:11px; overflow-wrap:anywhere; }
+.settings .request-actions { align-items:center; }
+.settings .request-actions .primary { gap:10px; }

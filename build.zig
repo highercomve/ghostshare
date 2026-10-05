@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .tray = true,
         .menu = false,
-        .store = false,
+        .store = true, // dataDir: where settings.json lives
         .dialog = true,
         .native_ui = b.option(bool, "native_ui", "Use the native renderer") orelse true,
         .notification = true,
@@ -118,6 +118,12 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| verify.addArgs(args);
     b.step("verify-updates", "Verify signed release manifests and update payloads").dependOn(&verify.step);
     const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostshare-quickshare" });
-    const test_step = b.step("test", "Test the Quick Share bridge");
+    const test_step = b.step("test", "Test the Quick Share bridge and the settings");
     test_step.dependOn(&tests.step);
+    const settings_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/settings.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+    }) });
+    test_step.dependOn(&b.addRunArtifact(settings_tests).step);
 }

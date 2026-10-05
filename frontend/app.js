@@ -230,6 +230,70 @@ if (window.oriel) {
 }
 $("quit").addEventListener("click", () => call("quit"));
 
+// Settings: the advertised name and the download folder. Empty fields are
+// the defaults (the system's name, the platform's folder).
+let settings = null, settings_busy = false;
+function field_error(id, message) { $(id).textContent = message || ""; $(id).hidden = !message; }
+// The same rules as src/settings.zig: trimmed, up to 64 characters, no control characters.
+function name_problem(name) {
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return "The name can't contain control characters";
+  const chars = Array.from(name), utf8 = chars.reduce((n, c) => { const p = c.codePointAt(0); return n + (p < 0x80 ? 1 : p < 0x800 ? 2 : p < 0x10000 ? 3 : 4); }, 0);
+  if (chars.length > 64 || utf8 > 170) return "Use a shorter name (up to 64 characters)";
+  return "";
+}
+function render_settings() {
+  if (!settings) return;
+  $("device-name").value = settings.device_name;
+  $("device-name").placeholder = settings.system_name || "This device";
+  $("download-dir").value = settings.download_dir;
+  $("download-dir").placeholder = (!settings.download_dir && model && model.download_dir) || "Default folder";
+  $("download-edit").hidden = !settings.folder_editable;
+  $("download-browse").hidden = !settings.folder_picker;
+  $("download-default").hidden = !settings.folder_editable;
+  $("download-current").hidden = settings.folder_editable;
+  $("download-current").textContent = model ? model.download_dir : "";
+  if (!settings.folder_editable) $("download-help-text").textContent = "Received files are saved in GhostShare’s own folder. Choosing another folder isn’t available on Android yet.";
+}
+async function open_settings() {
+  $("settings").hidden = false; $("settings-open").setAttribute("aria-expanded", "true");
+  field_error("device-name-error"); field_error("download-dir-error"); $("settings-status").textContent = "";
+  try { settings = await call("settings_get"); render_settings(); $("device-name").focus(); }
+  catch (err) { field_error("download-dir-error", err.message || err); }
+}
+function close_settings() { $("settings").hidden = true; $("settings-open").setAttribute("aria-expanded", "false"); }
+async function save_settings(device_name, download_dir) {
+  if (settings_busy) return;
+  field_error("device-name-error"); field_error("download-dir-error"); $("settings-status").textContent = "";
+  const problem = name_problem(device_name.trim());
+  if (problem) { field_error("device-name-error", problem); return; }
+  settings_busy = true;
+  for (const id of ["settings-save", "settings-reset", "download-browse", "download-default"]) $(id).disabled = true;
+  try {
+    settings = await call("settings_save", { device_name, download_dir:settings && settings.folder_editable ? download_dir : "" });
+    await poll(); render_settings();
+    $("settings-status").textContent = "Saved · Nearby devices now see " + (model ? model.name : settings.device_name || settings.system_name);
+  } catch (err) {
+    const message = String(err.message || err);
+    field_error(/name/i.test(message) ? "device-name-error" : "download-dir-error", message);
+  } finally {
+    settings_busy = false;
+    for (const id of ["settings-save", "settings-reset", "download-browse", "download-default"]) $(id).disabled = false;
+  }
+}
+$("settings-open").addEventListener("click", () => $("settings").hidden ? open_settings() : close_settings());
+$("settings-close").addEventListener("click", close_settings);
+$("settings-save").addEventListener("click", () => save_settings($("device-name").value, $("download-dir").value));
+$("settings-reset").addEventListener("click", () => save_settings("", ""));
+$("download-default").addEventListener("click", () => { $("download-dir").value = ""; field_error("download-dir-error"); });
+$("download-dir").addEventListener("input", () => field_error("download-dir-error"));
+$("device-name").addEventListener("input", () => field_error("device-name-error", name_problem($("device-name").value.trim())));
+$("download-browse").addEventListener("click", async () => {
+  $("download-browse").disabled = true;
+  try { const folder = await call("select_folder"); if (folder) { $("download-dir").value = folder; field_error("download-dir-error"); } }
+  catch (err) { field_error("download-dir-error", err.message || err); }
+  finally { $("download-browse").disabled = false; }
+});
+
 let update_busy = false, update_android = false, update_version = "";
 async function check_updates() {
   if (update_busy || !$("update-restart").hidden) return;

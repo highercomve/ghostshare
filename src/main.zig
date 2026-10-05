@@ -5,6 +5,7 @@ const desktop_linux = builtin.os.tag == .linux and builtin.abi != .android;
 const app = @import("oriel_app");
 const updates = @import("updates.zig");
 const cli = @import("cli.zig");
+const settings = @import("settings.zig");
 const android_multicast = if (builtin.abi == .android) @import("android_multicast.zig") else struct {
     pub fn acquire() void {}
     pub fn release() void {}
@@ -33,6 +34,16 @@ var tray: ?*oriel.tray.Tray = null;
 var startup_error: ?[]const u8 = null;
 /// Where received files go: set by `main` before `start_engine`.
 var engine_directory: [:0]const u8 = "";
+/// The platform's default download folder, as `ghostshare_start` takes it:
+/// "" on desktop (the engine's default), `<external files>/Received` on Android.
+var default_directory: [:0]const u8 = "";
+const app_id = "dev.ghostshare.App";
+var app_io: std.Io = undefined;
+/// The app's data directory, where settings.json lives (null: unavailable).
+var data_dir: ?[]const u8 = null;
+/// The saved settings (strings owned by `smp_allocator`), under `settings_lock`.
+var saved_settings: settings.Settings = .{};
+var settings_lock: std.Io.Mutex = .init;
 var device_visible: std.atomic.Value(bool) = .init(true);
 
 const ClipboardText = struct { text: []const u8 };
@@ -97,11 +108,39 @@ fn tray_set_visibility(visible: bool) void {
     };
     defer allocator.free(response);
 }
-/// The name nearby devices see: the platform's device name (on Android,
-/// Settings > About phone) instead of the host name, which is "localhost"
-/// there. Failures leave the engine on the host name.
+/// Read settings.json from the app's data directory; without one, the
+/// defaults.
+fn load_settings(io: std.Io) void {
+    const gpa = std.heap.smp_allocator;
+    const path = oriel.store.dataDir(gpa, app_id) catch |err| {
+        std.log.warn("no app data directory, settings won't be kept: {s}", .{@errorName(err)});
+        return;
+    };
+    data_dir = path;
+    var dir = std.Io.Dir.openDirAbsolute(io, path, .{}) catch return;
+    defer dir.close(io);
+    saved_settings = settings.load(gpa, io, dir) catch return;
+}
+/// A copy of the saved settings, owned by `gpa`.
+fn current_settings(gpa: std.mem.Allocator) !settings.Settings {
+    settings_lock.lockUncancelable(app_io);
+    defer settings_lock.unlock(app_io);
+    return saved_settings.clone(gpa);
+}
+/// The name nearby devices see: the one saved in Settings, else the
+/// platform's device name (on Android, Settings > About phone) instead of
+/// the host name, which is "localhost" there. Caller frees.
+fn advertised_name(gpa: std.mem.Allocator) ![]u8 {
+    const saved = try current_settings(gpa);
+    defer saved.deinit(gpa);
+    if (saved.device_name.len > 0) return gpa.dupe(u8, saved.device_name);
+    return oriel.system.deviceName(gpa);
+}
+/// Give the engine the advertised name; a running engine re-announces
+/// itself with it (mDNS), and new connections use it. Failures leave the
+/// engine on its current name (at first, the host name).
 fn set_device_name(gpa: std.mem.Allocator) void {
-    const name = oriel.system.deviceName(gpa) catch return;
+    const name = advertised_name(gpa) catch return;
     defer gpa.free(name);
     const name_z = gpa.dupeZ(u8, name) catch return;
     defer gpa.free(name_z);
@@ -273,7 +312,7 @@ export fn ghostshare_quit_requested() void {
 }
 
 pub const Commands = struct {
-    pub const async_commands = .{ "snapshot", "select_file", "send_files", "read_clipboard", "send_text", "copy_transfer", "decide", "cancel", "visibility", "select_folder", "open_transfer", "updater_check", "updater_install", "updater_restart" };
+    pub const async_commands = .{ "settings_get", "settings_save", "snapshot", "select_file", "send_files", "read_clipboard", "send_text", "copy_transfer", "decide", "cancel", "visibility", "select_folder", "open_transfer", "updater_check", "updater_install", "updater_restart" };
     pub const update_info = updates.info;
     pub const updater_check = updates.check;
     pub const updater_install = updates.install;
@@ -293,6 +332,40 @@ pub const Commands = struct {
             if (!finished) return oriel.ipc.fail("Finish or cancel current transfers before restarting", .{});
         }
         try updates.restart(allocator, io);
+    }
+    pub fn settings_get(allocator: std.mem.Allocator) !SettingsView {
+        return settings_view(allocator);
+    }
+    /// Validate and apply new settings, then save them. Empty values are
+    /// the defaults. The name takes effect at once (mDNS re-announces it);
+    /// the folder applies to transfers accepted from now on.
+    pub fn settings_save(allocator: std.mem.Allocator, io: std.Io, args: struct { device_name: []const u8 = "", download_dir: []const u8 = "" }) !SettingsView {
+        const name = settings.normalizeName(args.device_name) catch |err| return oriel.ipc.fail("{s}", .{settings.nameErrorMessage(err)});
+        const folder = std.mem.trim(u8, args.download_dir, " \t\r\n");
+        if (builtin.abi == .android and folder.len > 0) return oriel.ipc.fail("On Android, received files stay in GhostShare's folder", .{});
+        const path = data_dir orelse return oriel.ipc.fail("Settings can't be saved: there is no app data folder", .{});
+        // The engine checks the folder (it must exist and be writable) and
+        // switches to it; it answers with the folder's full path.
+        const response = try request_json(allocator, .{ .command = "download_dir", .directory = if (folder.len > 0) folder else default_directory, .create = folder.len == 0 });
+        defer allocator.free(response);
+        const result = try std.json.parseFromSlice(struct { ok: bool, data: ?[]const u8 = null, @"error": ?[]const u8 = null }, allocator, response, .{});
+        defer result.deinit();
+        if (!result.value.ok) return oriel.ipc.fail("{s}", .{result.value.@"error" orelse "This folder can't be used"});
+        const next: settings.Settings = .{ .device_name = name, .download_dir = if (folder.len > 0) result.value.data orelse folder else "" };
+        {
+            var dir = std.Io.Dir.openDirAbsolute(io, path, .{}) catch return oriel.ipc.fail("Settings can't be saved: the app data folder is unavailable", .{});
+            defer dir.close(io);
+            settings.save(allocator, io, dir, next) catch |err| return oriel.ipc.fail("Settings can't be saved: {s}", .{@errorName(err)});
+        }
+        const owned = try next.clone(std.heap.smp_allocator);
+        {
+            settings_lock.lockUncancelable(app_io);
+            defer settings_lock.unlock(app_io);
+            saved_settings.deinit(std.heap.smp_allocator);
+            saved_settings = owned;
+        }
+        set_device_name(allocator);
+        return settings_view(allocator);
     }
     pub fn snapshot(allocator: std.mem.Allocator) ![]const u8 {
         if (startup_error) |message| return allocator.dupe(u8, message);
@@ -360,7 +433,41 @@ pub const Commands = struct {
         return set_visibility(allocator, args.visible);
     }
 };
+const SettingsView = struct {
+    /// Saved values; empty means the default.
+    device_name: []const u8,
+    download_dir: []const u8,
+    /// The default name (the platform's device name), for the placeholder.
+    system_name: []const u8,
+    /// Whether the folder can be changed here, and with a folder chooser.
+    folder_editable: bool,
+    folder_picker: bool,
+};
+fn settings_view(allocator: std.mem.Allocator) !SettingsView {
+    const saved = try current_settings(allocator);
+    return .{
+        .device_name = saved.device_name,
+        .download_dir = saved.download_dir,
+        .system_name = oriel.system.deviceName(allocator) catch try allocator.dupe(u8, ""),
+        .folder_editable = builtin.abi != .android,
+        .folder_picker = desktop_linux,
+    };
+}
+/// The folder saved in Settings while it is still a folder, else the
+/// platform default (a folder on a drive that's gone isn't recreated).
+fn start_directory(io: std.Io) []const u8 {
+    const saved = saved_settings.download_dir;
+    if (saved.len == 0) return default_directory;
+    var dir = std.Io.Dir.openDirAbsolute(io, saved, .{}) catch |err| {
+        std.log.warn("download folder {s} unavailable ({s}); using the default", .{ saved, @errorName(err) });
+        return default_directory;
+    };
+    dir.close(io);
+    return saved;
+}
 pub fn main(init: std.process.Init) !u8 {
+    app_io = init.io;
+    load_settings(init.io);
     if (builtin.abi != .android) {
         const arena = init.arena.allocator();
         const all_args = try init.minimal.args.toSlice(arena);
@@ -374,7 +481,8 @@ pub fn main(init: std.process.Init) !u8 {
     }
 
     const directory = if (builtin.abi == .android) try std.fs.path.join(init.arena.allocator(), &.{ oriel.platform.impl.paths.externalFilesDir() orelse return error.MissingAndroidStorage, "Received" }) else "";
-    engine_directory = try init.arena.allocator().dupeZ(u8, directory);
+    default_directory = try init.arena.allocator().dupeZ(u8, directory);
+    engine_directory = try init.arena.allocator().dupeZ(u8, start_directory(init.io));
     defer android_multicast.release();
     defer android_beacon.stop();
     if (builtin.abi != .android) try start_engine(init.arena.allocator());
