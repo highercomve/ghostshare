@@ -4,10 +4,12 @@
 //! (mdns-sd only sends and receives multicast) come back to that group, so
 //! without the lock the device list stays empty. Acquiring the lock needs
 //! `android.permission.CHANGE_WIFI_MULTICAST_STATE` in the manifest (a normal
-//! permission: granted at install, no prompt; see tools/android_manifest.zig).
+//! permission: granted at install, no prompt), which Oriel emits for the
+//! `local_network` permission GhostShare declares in build.zig.
 //!
-//! Oriel has no API for this yet, so this calls the framework over JNI with
-//! Oriel's bindings. It runs on GhostShare's main thread (not Oriel's UI
+//! Oriel 0.9.1's `oriel.network.acquireMulticast` still returns
+//! `error.Unsupported` on Android (its Wi-Fi MulticastLock isn't written
+//! yet), so this calls the framework over JNI with Oriel's bindings. It runs on GhostShare's main thread (not Oriel's UI
 //! thread), attached to the VM for the call: only framework classes are
 //! used, which the system class loader finds from any thread.
 

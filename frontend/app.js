@@ -260,7 +260,17 @@ $("update-restart").addEventListener("click", async () => {
   if (active_transfers()) { $("update-status").textContent = "Finish or cancel your transfers before restarting"; return; }
   try { await call("updater_restart"); } catch (err) { $("update-status").textContent = String(err.message || err); }
 });
+// Quick Share finds devices over Bluetooth LE and mDNS: ask for both at
+// startup (Android shows the "Nearby devices" prompt; elsewhere the OS
+// answers without one). A refusal isn't fatal: discovery carries on.
+async function request_permissions() {
+  if (!window.oriel.permissions) return;
+  for (const name of ["bluetooth", "local_network"]) {
+    try { await window.oriel.permissions.request(name); } catch (_) {}
+  }
+}
 if (window.oriel) {
+  request_permissions();
   window.oriel.listen("tray_update", check_updates);
   window.oriel.listen("updater://progress", progress => {
     $("update-status").textContent = "Downloading update · " + (progress.total ? Math.round(progress.downloaded / progress.total * 100) + "%" : bytes(progress.downloaded));
