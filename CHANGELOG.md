@@ -23,7 +23,9 @@ settings, with a warm dark theme that follows the system.
   a reachable address instead of blocking on an unroutable interface.
 - Android starts its sharing engine off the UI thread and reports engine logs
   through logcat.
-- Builds use the official Oriel v0.9.1 tag for both the framework and CLI.
+- Builds use the official Oriel v0.9.1 framework tag and download its released
+  CLI binaries with checksum verification. The CLI manages the required Zig
+  version automatically.
 - Release notes are read from this changelog for reproducible release text.
 
 ### Fixed

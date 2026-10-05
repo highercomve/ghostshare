@@ -10,11 +10,11 @@ For a fresh checkout, put the development framework beside this repository:
 git clone --branch v0.9.1 https://github.com/highercomve/Oriel.git ../oriel
 ```
 
-Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel checkout at `../oriel`. CI checks out the official `v0.9.1` release alongside GhostShare and builds its CLI from source.
+Requirements: Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel checkout at `../oriel`. CI checks out the official `v0.9.1` release alongside GhostShare and downloads its CLI from the matching GitHub release, verifying SHA256SUMS. Oriel installs the required Zig version automatically.
 
 ```sh
 python3 scripts/setup-oriel.py
-../oriel/zig-out/bin/oriel build -Dnative_ui
+.oriel-cli/oriel-release-bin/oriel build -Dnative_ui
 ./zig-out/bin/ghostshare
 ```
 

@@ -20,7 +20,6 @@ defaults:
     working-directory: ghostshare
 env:
   ORIEL_REF: v0.9.1
-  ZIG_VERSION: 0.16.0
   GHOSTFILE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.2.0' }}
 jobs:
   framework-ready:
@@ -32,8 +31,7 @@ jobs:
         id: release
         working-directory: ${{ github.workspace }}
         run: |
-          revision=$(git ls-remote https://github.com/highercomve/Oriel.git "refs/tags/$ORIEL_REF" | head -n1)
-          if [ -n "$revision" ]; then
+          if curl --fail --silent --show-error "https://api.github.com/repos/highercomve/Oriel/releases/tags/$ORIEL_REF" > /dev/null; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -56,9 +54,6 @@ jobs:
           repository: highercomve/Oriel
           ref: refs/tags/${{ env.ORIEL_REF }}
           path: oriel
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
       - run: python scripts/setup-oriel.py
       - name: Package tools
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
@@ -98,9 +93,6 @@ jobs:
           repository: highercomve/Oriel
           ref: refs/tags/${{ env.ORIEL_REF }}
           path: oriel
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
       - run: brew install protobuf
       - run: python3 scripts/setup-oriel.py
       - name: Import persistent signing identity
@@ -155,9 +147,6 @@ jobs:
           repository: highercomve/Oriel
           ref: refs/tags/${{ env.ORIEL_REF }}
           path: oriel
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
       - name: Dependencies
         run: |
           choco install protoc nsis mingw --no-progress -y
@@ -198,9 +187,6 @@ jobs:
           repository: highercomve/Oriel
           ref: refs/tags/${{ env.ORIEL_REF }}
           path: oriel
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -274,11 +260,9 @@ jobs:
           path: ghostshare/dist
           merge-multiple: true
       - run: python3 scripts/combine-updates.py
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
+      - run: python3 scripts/setup-oriel.py
       - name: Verify every updater signature and payload
-        run: zig build verify-updates -- dist src/update-public-key.txt
+        run: oriel build verify-updates -- dist src/update-public-key.txt
       - uses: actions/upload-artifact@v4
         with:
           name: signed-update-feed
