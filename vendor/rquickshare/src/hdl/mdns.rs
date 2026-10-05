@@ -9,7 +9,9 @@ use tokio::time::{interval_at, Instant};
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
-use crate::utils::{device_name, gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
+use crate::utils::{
+    device_name, gen_mdns_endpoint_info, gen_mdns_name, subscribe_device_name, DeviceType,
+};
 
 const INNER_NAME: &str = "MDnsServer";
 const TICK_INTERVAL: Duration = Duration::from_secs(60);
@@ -36,6 +38,8 @@ impl Visibility {
 
 pub struct MDnsServer {
     daemon: ServiceDaemon,
+    endpoint_id: [u8; 4],
+    service_port: u16,
     service_info: ServiceInfo,
     ble_receiver: Receiver<()>,
     visibility_sender: Arc<Mutex<watch::Sender<Visibility>>>,
@@ -54,6 +58,8 @@ impl MDnsServer {
 
         Ok(Self {
             daemon: ServiceDaemon::new()?,
+            endpoint_id,
+            service_port,
             service_info,
             ble_receiver,
             visibility_sender,
@@ -67,6 +73,8 @@ impl MDnsServer {
         let ble_receiver = &mut self.ble_receiver;
         let mut visibility = *self.visibility_receiver.borrow();
         let mut interval = interval_at(Instant::now() + TICK_INTERVAL, TICK_INTERVAL);
+        let mut name_changes = subscribe_device_name();
+        name_changes.mark_unchanged();
 
         loop {
             tokio::select! {
@@ -80,6 +88,20 @@ impl MDnsServer {
                         Err(err) => return Err(err.into()),
                     }
                 },
+                Ok(()) = name_changes.changed() => {
+                    // The name is in the TXT record: withdraw the service
+                    // (goodbye packets, so browsers drop the old name) and
+                    // announce it again with the new one.
+                    name_changes.mark_unchanged();
+                    let service_info = Self::build_service(self.endpoint_id, self.service_port, DeviceType::Laptop)?;
+                    if visibility != Visibility::Invisible {
+                        if let Ok(receiver) = self.daemon.unregister(self.service_info.get_fullname()) {
+                            let _ = receiver.recv_timeout(Duration::from_secs(1));
+                        }
+                        self.daemon.register(service_info.clone())?;
+                    }
+                    self.service_info = service_info;
+                }
                 _ = self.visibility_receiver.changed() => {
                     visibility = *self.visibility_receiver.borrow_and_update();
 

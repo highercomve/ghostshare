@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     ffi::{CStr, CString},
     os::raw::c_char,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{mpsc as sync_channel, Mutex, OnceLock},
     thread,
     time::Duration,
@@ -69,10 +69,13 @@ enum Request {
         id: String,
     },
     ResolvePath { id: String, index: usize, folder: bool },
+    /// Where new transfers are saved: `directory` empty is the default
+    /// folder; `create` makes it (the default folder) instead of requiring
+    /// an existing, writable one (a folder the user chose).
+    DownloadDir { directory: String, create: bool },
     Stop,
 }
 struct Model {
-    name: String,
     download_dir: PathBuf,
     visible: bool,
     peers: BTreeMap<String, EndpointInfo>,
@@ -81,7 +84,7 @@ struct Model {
 }
 impl Model {
     fn snapshot(&self) -> Value {
-        json!({"name":self.name, "download_dir":self.download_dir, "visible":self.visible,
+        json!({"name":rqs_lib::device_name(), "download_dir":self.download_dir, "visible":self.visible,
             "peers":self.peers.values().collect::<Vec<_>>(), "transfers":self.transfers,
             "error":self.error, "protocol":"Quick Share"})
     }
@@ -244,6 +247,12 @@ async fn handle(
             let path = if folder { path.parent().ok_or("Folder unavailable")?.to_path_buf() } else { path };
             return Ok(json!(std::fs::canonicalize(path).map_err(|e| e.to_string())?));
         }
+        Request::DownloadDir { directory, create } => {
+            let directory = download_directory(&directory, create)?;
+            rqs.set_download_path(Some(directory.clone()));
+            model.download_dir = directory;
+            return Ok(json!(model.download_dir));
+        }
         Request::Cancel { id } => {
             let transfer = model
                 .transfers
@@ -267,7 +276,6 @@ async fn run(
     directory: PathBuf,
 ) {
     let mut model = Model {
-        name: rqs_lib::device_name(),
         download_dir: directory.clone(),
         visible: true,
         peers: BTreeMap::new(),
@@ -430,18 +438,7 @@ pub unsafe extern "C" fn ghostshare_start(directory: *const c_char) -> *mut c_ch
         let text = CStr::from_ptr(directory)
             .to_str()
             .map_err(|e| e.to_string())?;
-        let directory = if text.is_empty() && std::env::var_os("GHOSTFILE_DOWNLOAD_DIR").is_some() {
-            PathBuf::from(std::env::var_os("GHOSTFILE_DOWNLOAD_DIR").unwrap())
-        } else if text.is_empty() {
-            let dirs = directories::UserDirs::new().ok_or("Could not locate home directory")?;
-            dirs.download_dir()
-                .unwrap_or(dirs.home_dir())
-                .join("GhostShare")
-        } else {
-            PathBuf::from(text)
-        };
-        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-        let directory = std::fs::canonicalize(directory).map_err(|e| e.to_string())?;
+        let directory = download_directory(text, true)?;
         let mut engine = ENGINE
             .get_or_init(|| Mutex::new(None))
             .lock()
@@ -506,6 +503,46 @@ pub unsafe extern "C" fn ghostshare_request(request: *const c_char) -> *mut c_ch
             .map_err(|e| e.to_string())?
     })
 }
+/// The desktop default download folder: `GHOSTFILE_DOWNLOAD_DIR`, else
+/// `~/Downloads/GhostShare`.
+fn default_directory() -> Result<PathBuf, String> {
+    if let Some(directory) = std::env::var_os("GHOSTFILE_DOWNLOAD_DIR") {
+        return Ok(PathBuf::from(directory));
+    }
+    let dirs = directories::UserDirs::new().ok_or("Could not locate home directory")?;
+    Ok(dirs.download_dir().unwrap_or(dirs.home_dir()).join("GhostShare"))
+}
+/// Fails unless a file can be created in `directory`.
+fn check_writable(directory: &Path) -> Result<(), String> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let probe = directory.join(format!(".ghostshare-write-test-{}-{nanos}", std::process::id()));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|_| "GhostShare can't write to this folder".to_string())?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+/// Where received files go, canonical: `text` empty is `default_directory`.
+/// With `create`, the folder is made if missing (default folders); without,
+/// it must already exist (a folder the user chose). Either way it must be a
+/// writable directory.
+fn download_directory(text: &str, create: bool) -> Result<PathBuf, String> {
+    let directory = if text.trim().is_empty() { default_directory()? } else { PathBuf::from(text) };
+    if !directory.is_absolute() {
+        return Err("Use a full folder path".into());
+    }
+    if create {
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    }
+    let directory = std::fs::canonicalize(&directory).map_err(|_| "This folder doesn't exist".to_string())?;
+    if !directory.is_dir() {
+        return Err("Choose a folder, not a file".into());
+    }
+    check_writable(&directory)?;
+    Ok(directory)
+}
 #[no_mangle]
 pub extern "C" fn ghostshare_stop() {
     let Some(lock) = ENGINE.get() else {
@@ -543,7 +580,6 @@ mod tests {
     #[test]
     fn preserves_pin_and_metadata_when_state_only_event_arrives() {
         let mut model = Model {
-            name: "test".into(),
             download_dir: PathBuf::new(),
             visible: true,
             peers: BTreeMap::new(),
@@ -567,5 +603,66 @@ mod tests {
             Some("1234")
         );
         assert_eq!(model.transfers[0].rtype, Some(TransferType::Inbound));
+    }
+    fn scratch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("ghostshare-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+    #[test]
+    fn chosen_download_folder_must_exist() {
+        let path = scratch("missing");
+        assert!(download_directory(path.to_str().unwrap(), false).is_err());
+        assert!(!path.exists());
+        std::fs::create_dir_all(&path).unwrap();
+        assert_eq!(download_directory(path.to_str().unwrap(), false).unwrap(), std::fs::canonicalize(&path).unwrap());
+        // No probe file left behind.
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+    #[test]
+    fn default_download_folder_is_created() {
+        let path = scratch("default").join("Received");
+        assert_eq!(download_directory(path.to_str().unwrap(), true).unwrap(), std::fs::canonicalize(&path).unwrap());
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn download_folder_rejects_files_and_relative_paths() {
+        let path = scratch("file");
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(download_directory(file.to_str().unwrap(), false).is_err());
+        assert!(download_directory("relative/folder", false).is_err());
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn download_folder_must_be_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = scratch("readonly");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Root can write anywhere: only check where permissions apply.
+        if std::fs::write(path.join("probe"), b"").is_err() {
+            assert!(download_directory(path.to_str().unwrap(), false).is_err());
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+    #[test]
+    fn device_name_changes_notify_and_show_in_snapshots() {
+        let mut changes = rqs_lib::subscribe_device_name();
+        changes.mark_unchanged();
+        rqs_lib::set_device_name(Some("  Desk  ".into()));
+        assert!(changes.has_changed().unwrap());
+        changes.mark_unchanged();
+        // The same name again is not a change.
+        rqs_lib::set_device_name(Some("Desk".into()));
+        assert!(!changes.has_changed().unwrap());
+        let model = Model { download_dir: PathBuf::new(), visible: true, peers: BTreeMap::new(), transfers: vec![], error: None };
+        assert_eq!(model.snapshot()["name"], "Desk");
+        rqs_lib::set_device_name(None);
+        assert!(changes.has_changed().unwrap());
     }
 }
