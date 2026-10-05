@@ -97,11 +97,11 @@ pub fn build(b: *std.Build) void {
     }
     if (target.result.os.tag == .macos) application.exe.root_module.linkFramework("CoreBluetooth", .{});
     if (android) {
-        // GhostShare's Kotlin (the BLE beacon, src/android_beacon.zig), copied
-        // into the Gradle project that `zig build android-project` writes:
-        // Oriel has no option for an app's own Android sources yet.
+        // GhostShare's Kotlin (the BLE beacon, src/android_beacon.zig) and AndroidManifest,
+        // copied into the Gradle project that `zig build android-project` writes:
         const sources = b.addUpdateSourceFiles();
         sources.addCopyFileToSource(b.path("src/android/QuickShareBeacon.kt"), "android/app/src/main/java/dev/ghostshare/QuickShareBeacon.kt");
+        sources.addCopyFileToSource(b.path("src/android/AndroidManifest.xml"), "android/app/src/main/AndroidManifest.xml");
         b.getInstallStep().dependOn(&sources.step);
         if (b.top_level_steps.get("android-dev")) |dev| dev.step.dependOn(&sources.step);
     }

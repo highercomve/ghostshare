@@ -138,7 +138,14 @@ object QuickShareBeacon {
     }
 
     private fun permissions(): Array<String> =
-        if (Build.VERSION.SDK_INT >= 31) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.NEARBY_WIFI_DEVICES,
+            )
+        } else if (Build.VERSION.SDK_INT >= 31) {
             arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         } else {
             // Normal permissions up to API 30: granted at install.
@@ -209,7 +216,7 @@ object QuickShareBeacon {
             }
             val le = adapter.bluetoothLeAdvertiser
             if (le == null) {
-                Log.w(TAG, "Quick Share BLE beacon: this device can't advertise over BLE")
+                Log.w(TAG, "Quick Share BLE beacon: adapter has no BLE advertiser")
                 return
             }
             val settings = AdvertiseSettings.Builder()
@@ -219,18 +226,12 @@ object QuickShareBeacon {
                 .setTimeout(0)
                 .build()
             val data = AdvertiseData.Builder()
+                .addServiceData(SERVICE_UUID, SERVICE_DATA)
                 .setIncludeDeviceName(false)
                 .setIncludeTxPowerLevel(false)
-                .addServiceData(SERVICE_UUID, SERVICE_DATA)
                 .build()
-            try {
-                le.startAdvertising(settings, data, callback)
-                advertiser = le
-            } catch (e: SecurityException) {
-                Log.w(TAG, "Quick Share BLE beacon: not allowed", e)
-            } catch (e: Exception) {
-                Log.w(TAG, "Quick Share BLE beacon: start failed", e)
-            }
+            advertiser = le
+            le.startAdvertising(settings, data, callback)
         }
     }
 
@@ -241,7 +242,7 @@ object QuickShareBeacon {
             le.stopAdvertising(callback)
             Log.i(TAG, "Quick Share BLE beacon: stopped")
         } catch (e: Exception) {
-            Log.w(TAG, "Quick Share BLE beacon: stop failed", e)
+            Log.w(TAG, "Quick Share BLE beacon: stopAdvertising failed", e)
         }
     }
 }
