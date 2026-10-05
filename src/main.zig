@@ -5,6 +5,10 @@ const desktop_linux = builtin.os.tag == .linux and builtin.abi != .android;
 const app = @import("oriel_app");
 const updates = @import("updates.zig");
 const cli = @import("cli.zig");
+const android_multicast = if (builtin.abi == .android) @import("android_multicast.zig") else struct {
+    pub fn acquire() void {}
+    pub fn release() void {}
+};
 
 pub const std_options: std.Options = .{ .logFn = oriel.log.logFn };
 extern fn ghostshare_start(directory: [*:0]const u8) ?[*:0]u8;
@@ -321,6 +325,9 @@ pub fn main(init: std.process.Init) !u8 {
 
     const directory = if (builtin.abi == .android) try std.fs.path.join(init.arena.allocator(), &.{ oriel.platform.impl.paths.externalFilesDir() orelse return error.MissingAndroidStorage, "Received" }) else "";
     const directory_z = try init.arena.allocator().dupeZ(u8, directory);
+    // Before the engine starts browsing, so its first mDNS answers get through.
+    android_multicast.acquire();
+    defer android_multicast.release();
     const response = ghostshare_start(directory_z) orelse return error.QuickShareUnavailable;
     defer ghostshare_free(response);
     const result = try std.json.parseFromSlice(struct { ok: bool }, init.gpa, std.mem.span(response), .{ .ignore_unknown_fields = true });
