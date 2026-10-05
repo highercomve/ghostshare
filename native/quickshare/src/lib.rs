@@ -342,6 +342,49 @@ fn guarded(f: impl FnOnce() -> Result<Value, String>) -> *mut c_char {
             .unwrap_or_else(|_| Err("Quick Share engine panicked".into())),
     )
 }
+/// Android discards stderr and has no state directory for a log file: the
+/// engine's log goes to logcat instead (`adb logcat -s GhostShare`), with
+/// discovery (`rqs_lib`) at info so that resolved devices show up there.
+#[cfg(target_os = "android")]
+fn setup_logging() {
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn,rqs_lib=info".into()))
+        .with_writer(|| logcat::Writer::default())
+        .try_init();
+}
+#[cfg(target_os = "android")]
+mod logcat {
+    use std::{ffi::CString, io, os::raw::{c_char, c_int}};
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_write(priority: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+    }
+    /// One tracing event's text, written to logcat as one entry when dropped.
+    #[derive(Default)]
+    pub struct Writer(Vec<u8>);
+    impl io::Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+    impl Drop for Writer {
+        fn drop(&mut self) {
+            let text = String::from_utf8_lossy(&self.0);
+            let text = text.trim_end();
+            if text.is_empty() { return; }
+            // android/log.h: INFO 4, WARN 5, ERROR 6.
+            let level = text.split_whitespace().next().unwrap_or("");
+            let priority = match level { "ERROR" => 6, "WARN" => 5, _ => 4 };
+            let Ok(text) = CString::new(text.replace('\0', " ")) else { return; };
+            unsafe { __android_log_write(priority, c"GhostShare".as_ptr(), text.as_ptr()); }
+        }
+    }
+}
+#[cfg(not(target_os = "android"))]
 fn setup_logging() {
     let writer: Box<dyn std::io::Write + Send> = (|| -> std::io::Result<_> {
         let dirs = directories::ProjectDirs::from("dev", "ghostshare", "GhostShare")
