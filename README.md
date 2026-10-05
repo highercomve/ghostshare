@@ -7,14 +7,14 @@ A native Oriel desktop app for sharing files over your local network with other 
 For a fresh checkout, put the development framework beside this repository:
 
 ```sh
-git clone --branch v0.9.0 https://github.com/highercomve/Oriel.git ../oriel-ghostshare
+git clone --branch v0.9.1 https://github.com/highercomve/Oriel.git ../oriel
 ```
 
-Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel checkout at `../oriel-ghostshare`. CI checks out the official `v0.9.0` release alongside GhostShare and builds its CLI from source.
+Requirements: Zig 0.16, Rust/Cargo, `protoc`, GTK4 development libraries and D-Bus development libraries on Linux. GhostShare uses the Oriel checkout at `../oriel`. CI checks out the official `v0.9.1` release alongside GhostShare and builds its CLI from source.
 
 ```sh
 python3 scripts/setup-oriel.py
-../oriel-ghostshare/zig-out/bin/oriel build -Dnative_ui
+../oriel/zig-out/bin/oriel build -Dnative_ui
 ./zig-out/bin/ghostshare
 ```
 

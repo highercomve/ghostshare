@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+#[cfg(not(target_os = "android"))]
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
@@ -27,8 +28,6 @@ pub struct EndpointInfo {
 pub struct MDnsDiscovery {
     #[cfg(not(target_os = "android"))]
     daemon: ServiceDaemon,
-    #[cfg(target_os = "android")]
-    daemon: Option<ServiceDaemon>,
     sender: broadcast::Sender<EndpointInfo>,
 }
 
@@ -59,7 +58,6 @@ mod android_nsd {
     }
 
     extern "C" {
-        pub fn oriel_mdns_supported() -> i32;
         pub fn oriel_mdns_browse(
             service_type: *const c_char,
             cb: extern "C" fn(ctx: *mut std::ffi::c_void, event: *const OrielMdnsEvent),
@@ -146,18 +144,13 @@ impl MDnsDiscovery {
 
     #[cfg(target_os = "android")]
     pub fn new(sender: broadcast::Sender<EndpointInfo>) -> Result<Self, anyhow::Error> {
-        let daemon = ServiceDaemon::new().ok();
-        Ok(Self { daemon, sender })
+        Ok(Self { sender })
     }
 
     pub async fn run(self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
         #[cfg(target_os = "android")]
-        {
-            if unsafe { android_nsd::oriel_mdns_supported() } != 0 {
-                return self.run_android_nsd(ctk).await;
-            }
-        }
-
+        return self.run_android_nsd(ctk).await;
+        #[cfg(not(target_os = "android"))]
         self.run_mdns_sd(ctk).await
     }
 
@@ -225,7 +218,10 @@ impl MDnsDiscovery {
                                         continue;
                                     }
                                     let ip_port = format!("{ip}:{port}");
-                                    if let Ok(Ok(_)) = timeout(Duration::from_millis(1000), TcpStream::connect(&ip_port)).await {
+                                    if let Ok(Ok(stream)) = timeout(Duration::from_millis(1000), TcpStream::connect(&ip_port)).await {
+                                        if !connection_is_remote(&stream) {
+                                            continue;
+                                        }
                                         reachable_ip = Some(ip);
                                         break;
                                     }
@@ -272,17 +268,12 @@ impl MDnsDiscovery {
         Ok(())
     }
 
+    #[cfg(not(target_os = "android"))]
     async fn run_mdns_sd(self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
         info!("MDnsDiscovery: service starting");
 
         #[cfg(not(target_os = "android"))]
         let daemon = self.daemon;
-        #[cfg(target_os = "android")]
-        let daemon = match self.daemon {
-            Some(d) => d,
-            None => anyhow::bail!("ServiceDaemon is not available on Android"),
-        };
-
         let service_type = "_FC9F5ED42C8A._tcp.local.";
         let receiver = daemon.browse(service_type)?;
 
@@ -330,7 +321,10 @@ impl MDnsDiscovery {
                                             continue;
                                         }
                                         let ip_port = format!("{ip}:{port}");
-                                        if let Ok(Ok(_)) = timeout(Duration::from_millis(1000), TcpStream::connect(&ip_port)).await {
+                                        if let Ok(Ok(stream)) = timeout(Duration::from_millis(1000), TcpStream::connect(&ip_port)).await {
+                                            if !connection_is_remote(&stream) {
+                                                continue;
+                                            }
                                             reachable_ip = Some(*ip);
                                             break;
                                         }
@@ -383,5 +377,26 @@ impl MDnsDiscovery {
             let _ = receiver.recv_timeout(std::time::Duration::from_secs(1));
         }
         Ok(())
+    }
+}
+
+// Android may refuse native interface enumeration. The connected socket
+// still tells us whether both ends are this device; do not list ourselves.
+fn connection_is_remote(stream: &TcpStream) -> bool {
+    match (stream.local_addr(), stream.peer_addr()) {
+        (Ok(local), Ok(peer)) => local.ip() != peer.ip(),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn excludes_own_listener_without_enumerating_interfaces() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        assert!(!connection_is_remote(&stream));
     }
 }

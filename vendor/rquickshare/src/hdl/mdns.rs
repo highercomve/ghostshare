@@ -1,19 +1,29 @@
+#[cfg(not(target_os = "android"))]
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "android"))]
 use std::time::Duration;
 
+#[cfg(not(target_os = "android"))]
 use mdns_sd::{AddrType, ServiceDaemon, ServiceInfo};
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "android"))]
 use tokio::sync::broadcast::Receiver;
+#[cfg(not(target_os = "android"))]
 use tokio::sync::watch;
+#[cfg(not(target_os = "android"))]
 use tokio::time::{interval_at, Instant};
+#[cfg(not(target_os = "android"))]
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
+#[cfg(not(target_os = "android"))]
 use crate::utils::{
     device_name, gen_mdns_endpoint_info, gen_mdns_name, subscribe_device_name, DeviceType,
 };
 
+#[cfg(not(target_os = "android"))]
 const INNER_NAME: &str = "MDnsServer";
+#[cfg(not(target_os = "android"))]
 const TICK_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -36,6 +46,7 @@ impl Visibility {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub struct MDnsServer {
     daemon: ServiceDaemon,
     endpoint_id: [u8; 4],
@@ -46,6 +57,7 @@ pub struct MDnsServer {
     visibility_receiver: watch::Receiver<Visibility>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl MDnsServer {
     pub fn new(
         endpoint_id: [u8; 4],
@@ -164,7 +176,7 @@ impl MDnsServer {
         let name = gen_mdns_name(endpoint_id);
         // The mDNS host name stays the system's; the name phones show is
         // the device name in the endpoint info.
-        let hostname = hostname::get()?.to_string_lossy().into_owned();
+        let hostname = mdns_hostname(&hostname::get()?.to_string_lossy());
         let device_name = device_name();
         info!("Broadcasting as: {device_name} (host {hostname})");
         let endpoint_info = gen_mdns_endpoint_info(device_type as u8, &device_name);
@@ -181,5 +193,30 @@ impl MDnsServer {
         .enable_addr_auto(AddrType::V4);
 
         Ok(si)
+    }
+}
+
+// Android's resolver needs a fully qualified mDNS host, rather than a bare
+// system hostname such as "ridge" (or Android's shared "localhost").
+#[cfg(not(target_os = "android"))]
+fn mdns_hostname(hostname: &str) -> String {
+    let hostname = hostname.trim_end_matches('.');
+    if hostname.to_ascii_lowercase().ends_with(".local") {
+        format!("{hostname}.")
+    } else {
+        format!("{hostname}.local.")
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod hostname_tests {
+    use super::mdns_hostname;
+
+    #[test]
+    fn announces_fully_qualified_local_hostname() {
+        assert_eq!(mdns_hostname("ridge"), "ridge.local.");
+        assert_eq!(mdns_hostname("ridge.local"), "ridge.local.");
+        assert_eq!(mdns_hostname("ridge.local."), "ridge.local.");
+        assert_eq!(mdns_hostname("ridge.LOCAL."), "ridge.LOCAL.");
     }
 }

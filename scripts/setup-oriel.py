@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 import subprocess
 
-framework = Path("../oriel-ghostshare").resolve()
+framework = Path("../oriel").resolve()
 if not (framework / "build.zig").is_file():
-    raise SystemExit("Oriel development checkout is required at ../oriel-ghostshare")
+    raise SystemExit("Oriel development checkout is required at ../oriel")
 revision = subprocess.check_output(["git", "-C", str(framework), "rev-parse", "HEAD"], text=True).strip()
 expected = os.environ.get("ORIEL_REF")
 if expected:

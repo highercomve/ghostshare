@@ -96,6 +96,28 @@ impl Model {
             "peers":self.peers.values().collect::<Vec<_>>(), "transfers":self.transfers,
             "relocations":self.relocations, "error":self.error, "protocol":"Quick Share"})
     }
+    /// A restarted phone has a new port and service ID; Android may leave
+    /// its previous announcement cached. Remove unreachable duplicate
+    /// endpoints, keeping distinct receivers that are still listening.
+    async fn prune_duplicate_peers(&mut self) {
+        let candidates: Vec<String> = self.peers.values().filter(|peer| {
+            peer.ip.is_some() && self.peers.values().any(|other| {
+                peer.id != other.id && peer.ip == other.ip && peer.name == other.name
+            })
+        }).map(|peer| peer.id.clone()).collect();
+        let mut probes = tokio::task::JoinSet::new();
+        for id in candidates {
+            probes.spawn(async move {
+                let reachable = matches!(tokio::time::timeout(
+                    Duration::from_millis(750), tokio::net::TcpStream::connect(&id)
+                ).await, Ok(Ok(_)));
+                (!reachable).then_some(id)
+            });
+        }
+        while let Some(result) = probes.join_next().await {
+            if let Ok(Some(id)) = result { self.peers.remove(&id); }
+        }
+    }
     fn transfer_event(&mut self, mut event: ChannelMessage) {
         if event.direction != ChannelDirection::LibToFront {
             return;
@@ -338,8 +360,10 @@ async fn run(
         return;
     }
     let _ = ready.send(Ok(()));
+    let mut peer_cleanup = tokio::time::interval(Duration::from_secs(5));
     loop {
         tokio::select! {
+            _ = peer_cleanup.tick() => model.prune_duplicate_peers().await,
             envelope = requests.recv() => {
                 let Some(envelope) = envelope else { break; };
                 if matches!(envelope.request, Request::Stop) {
@@ -607,6 +631,36 @@ pub unsafe extern "C" fn ghostshare_free(pointer: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn removes_stale_phone_ports_and_preserves_live_receivers() {
+        let live = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let another_live = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stopped = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old_address = stopped.local_addr().unwrap();
+        drop(stopped);
+        let make_peer = |address: std::net::SocketAddr| EndpointInfo {
+            id: address.to_string(),
+            ip: Some(address.ip().to_string()),
+            port: Some(address.port().to_string()),
+            name: Some("Poco x3".into()),
+            present: Some(true),
+            ..Default::default()
+        };
+        let live_id = live.local_addr().unwrap().to_string();
+        let another_id = another_live.local_addr().unwrap().to_string();
+        let peers = [make_peer(live.local_addr().unwrap()),
+            make_peer(another_live.local_addr().unwrap()), make_peer(old_address)];
+        let mut model = Model {
+            download_dir: PathBuf::new(), visible: true,
+            peers: peers.into_iter().map(|peer| (peer.id.clone(), peer)).collect(),
+            transfers: vec![], relocations: BTreeMap::new(), error: None,
+        };
+        model.prune_duplicate_peers().await;
+        assert_eq!(model.peers.len(), 2);
+        assert!(model.peers.contains_key(&live_id));
+        assert!(model.peers.contains_key(&another_id));
+        assert!(!model.peers.contains_key(&old_address.to_string()));
+    }
     #[test]
     fn rejects_non_files_and_empty_batches() {
         assert!(validate_paths(&[]).is_err());
