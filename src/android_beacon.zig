@@ -91,7 +91,7 @@ fn callIn(env: *jni.Env, comptime method: [:0]const u8) !void {
 /// dev.ghostshare.QuickShareBeacon, through the Application's class loader.
 fn helperClass(env: *jni.Env) !jni.jclass {
     const f = env.functions;
-    // 1. Try to obtain the ClassLoader from dev/oriel/OrielRuntime
+    // 1. Try to obtain the ClassLoader from dev/oriel/OrielRuntime (which is already loaded by the app)
     if (f.FindClass(env, "dev/oriel/OrielRuntime")) |rt| {
         defer f.DeleteLocalRef(env, rt);
         if (getClassLoader(env, rt)) |loader| {
@@ -106,12 +106,13 @@ fn helperClass(env: *jni.Env) !jni.jclass {
 
 fn getClassLoader(env: *jni.Env, cls: jni.jclass) ?jni.jobject {
     const f = env.functions;
-    const class_class = f.GetObjectClass(env, cls) orelse {
+    // `cls` is already a jclass representing dev.oriel.OrielRuntime (an instance of java.lang.Class)
+    const class_loader_class = f.FindClass(env, "java/lang/Class") orelse {
         _ = env.clearException();
         return null;
     };
-    defer f.DeleteLocalRef(env, class_class);
-    const get_loader = f.GetMethodID(env, class_class, "getClassLoader", "()Ljava/lang/ClassLoader;") orelse {
+    defer f.DeleteLocalRef(env, class_loader_class);
+    const get_loader = f.GetMethodID(env, class_loader_class, "getClassLoader", "()Ljava/lang/ClassLoader;") orelse {
         _ = env.clearException();
         return null;
     };

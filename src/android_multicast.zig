@@ -1,12 +1,3 @@
-//! Android's Wi-Fi stack drops multicast frames that aren't addressed to the
-//! device unless an app holds a `WifiManager.MulticastLock`. Quick Share
-//! discovery is mDNS: queries go out to 224.0.0.251:5353 and the answers
-//! (mdns-sd only sends and receives multicast) come back to that group, so
-//! without the lock the device list stays empty. Acquiring the lock needs
-//! `android.permission.CHANGE_WIFI_MULTICAST_STATE` in the manifest (a normal
-//! permission: granted at install, no prompt), which Oriel emits for the
-//! `local_network` permission GhostShare declares in build.zig.
-
 const std = @import("std");
 const oriel = @import("oriel");
 const jni = oriel.android.jni;
@@ -70,27 +61,47 @@ fn acquireWith(env: *jni.Env) void {
     };
 }
 
+fn getApplication(env: *jni.Env) ?jni.jobject {
+    const f = env.functions;
+    const activity_thread = f.FindClass(env, "android/app/ActivityThread") orelse {
+        _ = env.clearException();
+        return null;
+    };
+    defer f.DeleteLocalRef(env, activity_thread);
+    const current_application = f.GetStaticMethodID(env, activity_thread, "currentApplication", "()Landroid/app/Application;") orelse {
+        _ = env.clearException();
+        return null;
+    };
+    const app = f.CallStaticObjectMethodA(env, activity_thread, current_application, null);
+    if (env.clearException()) return null;
+    return app;
+}
+
 fn acquireIn(env: *jni.Env) !void {
     const f = env.functions;
-    // The Application: ActivityThread.currentApplication()
-    const activity_thread = f.FindClass(env, "android/app/ActivityThread") orelse return error.NoActivityThread;
-    const current_application = f.GetStaticMethodID(env, activity_thread, "currentApplication", "()Landroid/app/Application;") orelse return error.NoCurrentApplication;
-    const app = f.CallStaticObjectMethodA(env, activity_thread, current_application, null);
-    if (env.clearException() or app == null) return error.NoApplication;
+    const app = getApplication(env) orelse return error.NoApplication;
+    defer f.DeleteLocalRef(env, app);
 
     const context = f.FindClass(env, "android/content/Context") orelse return error.NoContext;
+    defer f.DeleteLocalRef(env, context);
     const get_system_service = f.GetMethodID(env, context, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;") orelse return error.NoGetSystemService;
     const wifi_name = newString(env, "wifi") orelse return error.OutOfMemory;
+    defer f.DeleteLocalRef(env, wifi_name);
     const wifi = f.CallObjectMethodA(env, app, get_system_service, &[_]jni.jvalue{.{ .l = wifi_name }});
     if (env.clearException() or wifi == null) return error.NoWifiManager;
+    defer f.DeleteLocalRef(env, wifi);
 
     const wifi_manager = f.FindClass(env, "android/net/wifi/WifiManager") orelse return error.NoWifiManagerClass;
+    defer f.DeleteLocalRef(env, wifi_manager);
     const create_lock = f.GetMethodID(env, wifi_manager, "createMulticastLock", "(Ljava/lang/String;)Landroid/net/wifi/WifiManager$MulticastLock;") orelse return error.NoCreateMulticastLock;
     const tag = newString(env, "GhostShare mDNS") orelse return error.OutOfMemory;
+    defer f.DeleteLocalRef(env, tag);
     const lock = f.CallObjectMethodA(env, wifi, create_lock, &[_]jni.jvalue{.{ .l = tag }});
     if (env.clearException() or lock == null) return error.CreateMulticastLockFailed;
+    defer f.DeleteLocalRef(env, lock);
 
     const lock_class = f.GetObjectClass(env, lock) orelse return error.NoMulticastLockClass;
+    defer f.DeleteLocalRef(env, lock_class);
     const set_counted = f.GetMethodID(env, lock_class, "setReferenceCounted", "(Z)V") orelse return error.NoSetReferenceCounted;
     f.CallVoidMethodA(env, lock, set_counted, &[_]jni.jvalue{.{ .z = 0 }});
     if (env.clearException()) return error.SetReferenceCountedFailed;
