@@ -90,13 +90,17 @@ fn callIn(env: *jni.Env, comptime method: [:0]const u8) !void {
 
 /// dev.ghostshare.QuickShareBeacon, through the Application's class loader.
 fn helperClass(env: *jni.Env) !jni.jclass {
-    // 1. Prefer OrielRuntime's class loader (obtained directly from runtime_class)
-    if (oriel.android.runtime.runtime_class) |rt| {
+    const f = env.functions;
+    // 1. Try to obtain the ClassLoader from dev/oriel/OrielRuntime
+    if (f.FindClass(env, "dev/oriel/OrielRuntime")) |rt| {
+        defer f.DeleteLocalRef(env, rt);
         if (getClassLoader(env, rt)) |loader| {
             if (loadHelper(env, loader)) |cls| return cls;
         }
+    } else {
+        _ = env.clearException();
     }
-    // 2. Fall back to ActivityThread if runtime_class was not yet initialized
+    // 2. Fall back to ActivityThread.currentApplication()
     return helperClassViaActivityThread(env);
 }
 
