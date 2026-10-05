@@ -6,7 +6,7 @@ __pycache__/
 zig-pkg/
 vendor/rquickshare/target/
 dist/
-android/
+/android/
 *.p12
 *.pfx
 *.keystore

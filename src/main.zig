@@ -9,6 +9,10 @@ const android_multicast = if (builtin.abi == .android) @import("android_multicas
     pub fn acquire() void {}
     pub fn release() void {}
 };
+const android_beacon = if (builtin.abi == .android) @import("android_beacon.zig") else struct {
+    pub fn start() void {}
+    pub fn stop() void {}
+};
 
 pub const std_options: std.Options = .{ .logFn = oriel.log.logFn };
 extern fn ghostshare_start(directory: [*:0]const u8) ?[*:0]u8;
@@ -122,6 +126,9 @@ fn setup() !void {
     if (builtin.abi == .android) start_engine(std.heap.smp_allocator) catch |err| {
         startup_error = std.fmt.allocPrint(std.heap.smp_allocator, "{{\"ok\":false,\"error\":\"Quick Share could not start: {s}\"}}", .{@errorName(err)}) catch null;
     };
+    // Wake nearby phones so discovery finds them (Linux does this in the
+    // engine, with BlueZ). The helper waits for the permission and the adapter.
+    if (builtin.abi == .android) android_beacon.start();
     if (desktop_linux) ghostshare_desktop_init(oriel.App.gtk_app, oriel.App.main_window);
     tray = oriel.tray.Tray.create(std.heap.smp_allocator, .{
         .id = "dev.ghostshare.App",
@@ -358,6 +365,7 @@ pub fn main(init: std.process.Init) !u8 {
     const directory = if (builtin.abi == .android) try std.fs.path.join(init.arena.allocator(), &.{ oriel.platform.impl.paths.externalFilesDir() orelse return error.MissingAndroidStorage, "Received" }) else "";
     engine_directory = try init.arena.allocator().dupeZ(u8, directory);
     defer android_multicast.release();
+    defer android_beacon.stop();
     if (builtin.abi != .android) try start_engine(init.arena.allocator());
     defer ghostshare_stop();
     defer {
