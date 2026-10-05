@@ -171,11 +171,15 @@ function render_transfers() {
   }
 }
 let previous_peers = "", previous_transfers = "";
+// The banner shows a failed snapshot until one succeeds (the engine may
+// still be starting when the page first asks).
+let poll_failed = false;
 async function poll() {
   if (polling) return;
   polling = true;
   try {
     model = await call("snapshot");
+    if (poll_failed) { poll_failed = false; $("error").hidden = true; }
     $("visibility").textContent = model.visible ? "● Visible to nearby devices" : "○ Hidden from nearby devices";
     $("visibility").className = "presence" + (model.visible ? "" : " off");
     $("identity").textContent = "This computer · " + model.name;
@@ -184,7 +188,7 @@ async function poll() {
     const peers = JSON.stringify(model.peers), transfers = JSON.stringify(model.transfers);
     if (peers !== previous_peers) { previous_peers = peers; render_peers(); }
     if (transfers !== previous_transfers) { previous_transfers = transfers; render_transfers(); }
-  } catch (err) { error(err.message || err); $("visibility").textContent = "Quick Share unavailable"; }
+  } catch (err) { poll_failed = true; error(err.message || err); $("visibility").textContent = "Quick Share unavailable"; }
   finally { polling = false; }
 }
 async function choose_files() {

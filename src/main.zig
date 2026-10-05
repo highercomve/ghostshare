@@ -119,13 +119,24 @@ fn start_engine(gpa: std.mem.Allocator) !void {
     defer result.deinit();
     if (!result.value.ok) startup_error = try gpa.dupe(u8, std.mem.span(response));
 }
+fn android_start_engine() void {
+    start_engine(std.heap.smp_allocator) catch |err| android_start_engine_failed(err);
+}
+fn android_start_engine_failed(err: anyerror) void {
+    startup_error = std.fmt.allocPrint(std.heap.smp_allocator, "{{\"ok\":false,\"error\":\"Quick Share could not start: {s}\"}}", .{@errorName(err)}) catch null;
+}
 fn setup() !void {
     // Android: oriel.system.deviceName asks the UI thread, which runs only
-    // once oriel.main has started, so the engine starts here, before the
-    // page's first command.
-    if (builtin.abi == .android) start_engine(std.heap.smp_allocator) catch |err| {
-        startup_error = std.fmt.allocPrint(std.heap.smp_allocator, "{{\"ok\":false,\"error\":\"Quick Share could not start: {s}\"}}", .{@errorName(err)}) catch null;
-    };
+    // once oriel.main has started, so the engine starts from here, on its own
+    // thread: waiting for it (up to 10 s) on the UI thread would freeze the
+    // app. Until it's up, snapshot fails and the page polls again.
+    if (builtin.abi == .android) {
+        const thread = std.Thread.spawn(.{}, android_start_engine, .{}) catch |err| blk: {
+            android_start_engine_failed(err);
+            break :blk null;
+        };
+        if (thread) |t| t.detach();
+    }
     // Wake nearby phones so discovery finds them (Linux does this in the
     // engine, with BlueZ). The helper waits for the permission and the adapter.
     if (builtin.abi == .android) android_beacon.start();
