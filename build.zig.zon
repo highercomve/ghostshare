@@ -7,5 +7,5 @@
     .dependencies = .{
         .oriel = .{ .path = "../oriel-ghostshare" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "frontend", "README.md", "native", "vendor", "Cargo.toml", "Cargo.lock", "LICENSE", "icon.png", "assets", "tests", "install-local.sh" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "frontend", "README.md", "native", "vendor", "Cargo.toml", "Cargo.lock", "LICENSE", "icon.png", "assets", "tests", "install-local.sh", "tools" },
 }

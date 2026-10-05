@@ -89,6 +89,22 @@ pub fn build(b: *std.Build) void {
         for ([_][]const u8{ "ws2_32", "userenv", "bcrypt", "ntdll", "iphlpapi", "psapi" }) |library| application.exe.root_module.linkSystemLibrary(library, .{});
     }
     if (target.result.os.tag == .macos) application.exe.root_module.linkFramework("CoreBluetooth", .{});
+    // Permissions Oriel's `.permissions` can't declare, added to the
+    // generated manifest before Gradle packages it (`oriel android build`
+    // and `dev` run these steps; `init` writes the manifest).
+    const manifest_tool = b.addExecutable(.{
+        .name = "android-manifest",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tools/android_manifest.zig"), .target = b.graph.host }),
+    });
+    if (android) {
+        const manifest = b.addRunArtifact(manifest_tool);
+        manifest.addArg(b.pathFromRoot("android/app/src/main/AndroidManifest.xml"));
+        // The multicast lock for mDNS discovery (src/android_multicast.zig).
+        manifest.addArg("CHANGE_WIFI_MULTICAST_STATE");
+        manifest.has_side_effects = true;
+        b.getInstallStep().dependOn(&manifest.step);
+        if (b.top_level_steps.get("android-dev")) |dev| dev.step.dependOn(&manifest.step);
+    }
     const verifier = b.addExecutable(.{
         .name = "verify-updates",
         .root_module = b.createModule(.{
@@ -102,5 +118,7 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| verify.addArgs(args);
     b.step("verify-updates", "Verify signed release manifests and update payloads").dependOn(&verify.step);
     const tests = b.addSystemCommand(&.{ "cargo", "test", "--locked", "--package", "ghostshare-quickshare" });
-    b.step("test", "Test the Quick Share bridge").dependOn(&tests.step);
+    const test_step = b.step("test", "Test the Quick Share bridge and the build tools");
+    test_step.dependOn(&tests.step);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = manifest_tool.root_module })).step);
 }
